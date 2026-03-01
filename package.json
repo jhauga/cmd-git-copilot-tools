@@ -1,0 +1,57 @@
+{
+  "name": "cmd-git-copilot-tools",
+  "displayName": "Git Copilot Tools",
+  "publisher": "jhauga",
+  "author": {
+    "name": "John Haugabook"
+  },
+  "bugs": {
+    "url": "https://github.com/jhauga/cmd-git-copilot-tools/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jhauga/cmd-git-copilot-tools"
+  },
+  "qna": "https://github.com/jhauga/cmd-git-copilot-tools/issues",
+  "homepage": "https://github.com/jhauga/cmd-git-copilot-tools",
+  "description": "Browse and download agents, instructions, plugins, prompts, skills, and workflows from GitHub repositories with Copilot custom tools. Command-line tool port of the original VS Code extension.",
+  "version": "0.0.0",
+  "bin": {
+    "cmd-copilot-tools": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "scripts": {
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "node dist/cli.js --test",
+    "test:log": "node dist/cli.js --test:log",
+    "test:search": "node dist/cli.js --test:search",
+    "test:search:log": "node dist/cli.js --test:search:log",
+    "test:config": "node dist/cli.js --test:config",
+    "test:config:log": "node dist/cli.js --test:config:log",
+    "test:download": "node dist/cli.js --test:download",
+    "test:download:log": "node dist/cli.js --test:download:log",
+    "test:full": "node dist/cli.js --test:full",
+    "test:full:log": "node dist/cli.js --test:full:log"
+  },
+  "devDependencies": {
+    "@types/node": "20.x",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "esbuild": "^0.25.3",
+    "eslint": "^9.25.1",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "axios": "^1.11.0"
+  },
+  "optionalDependencies": {
+    "@esbuild/linux-x64": "^0.27.3"
+  }
+}
