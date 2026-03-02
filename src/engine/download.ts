@@ -87,6 +87,17 @@ export async function downloadItem(
   return metadata;
 }
 
+export function matchesToolName(itemName: string, rawName: string): boolean {
+  const normalized = rawName.toLowerCase().trim();
+  const name = itemName.toLowerCase();
+  return (
+    name === normalized ||
+    name === normalized + '.md' ||
+    name.replace(/\.(agents?|instructions?|prompts?|workflows?)\.md$/, '') === normalized ||
+    name.replace(/\.md$/, '') === normalized
+  );
+}
+
 export async function downloadItemsByName(
   items: CopilotItem[],
   names: string[],
@@ -96,23 +107,20 @@ export async function downloadItemsByName(
   const results: DownloadMetadata[] = [];
 
   for (const rawName of names) {
-    // Allow optional extension suffix
-    const normalized = rawName.toLowerCase().trim();
-    const matching = items.filter(item => {
-      const itemName = item.name.toLowerCase();
-      return (
-        itemName === normalized ||
-        itemName === normalized + '.md' ||
-        itemName.replace(/\.(agent|instruction|prompt|workflow)\.md$/, '') === normalized ||
-        itemName.replace(/\.md$/, '') === normalized
-      );
-    });
+    const matching = items.filter(item => matchesToolName(item.name, rawName));
 
     if (matching.length === 0) {
       throw new Error(`Tool '${rawName}' not found. Use --search to find available tools.`);
     }
 
-    for (const match of matching) {
+    const seen = new Set<string>();
+    const unique = matching.filter(item => {
+      if (seen.has(item.name)) { return false; }
+      seen.add(item.name);
+      return true;
+    });
+
+    for (const match of unique) {
       const meta = await downloadItem(match, destDir, token);
       results.push(meta);
       console.log(`Downloaded: ${match.name} → ${meta.localPath}`);

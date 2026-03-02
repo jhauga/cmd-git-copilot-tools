@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { getFileSizeDisplay } from '../../engine/download.js';
+import { getFileSizeDisplay, matchesToolName } from '../../engine/download.js';
 import { DOWNLOAD_PATHS, ORDERED_CATEGORIES } from '../../types.js';
 import type { ToolCategory } from '../../types.js';
 import { runSuite, assert, assertEqual } from '../runner.js';
@@ -71,6 +71,62 @@ export async function runDownloadSuite(): Promise<SuiteResult> {
       const paths = ORDERED_CATEGORIES.map(cat => path.join(destDir, DOWNLOAD_PATHS[cat]));
       const unique = new Set(paths);
       assertEqual(unique.size, ORDERED_CATEGORIES.length, 'each category should have a unique download path');
+    },
+    'matchesToolName: exact match with full extension': () => {
+      assert(matchesToolName('my-agent.agent.md', 'my-agent.agent.md'), 'exact agent match');
+      assert(matchesToolName('my-prompt.prompt.md', 'my-prompt.prompt.md'), 'exact prompt match');
+      assert(matchesToolName('my-flow.workflow.md', 'my-flow.workflow.md'), 'exact workflow match');
+    },
+    'matchesToolName: bare name matches .agent.md (singular)': () => {
+      assert(matchesToolName('my-agent.agent.md', 'my-agent'), 'bare name matches .agent.md');
+      assert(!matchesToolName('other-agent.agent.md', 'my-agent'), 'non-matching agent returns false');
+    },
+    'matchesToolName: bare name matches .agents.md (plural)': () => {
+      assert(matchesToolName('my-agent.agents.md', 'my-agent'), 'bare name matches .agents.md');
+    },
+    'matchesToolName: bare name matches .instruction.md (singular)': () => {
+      assert(matchesToolName('html-css-style-color-guide.instruction.md', 'html-css-style-color-guide'), 'bare name matches .instruction.md');
+    },
+    'matchesToolName: bare name matches .instructions.md (plural)': () => {
+      assert(matchesToolName('html-css-style-color-guide.instructions.md', 'html-css-style-color-guide'), 'bare name matches .instructions.md');
+      assert(matchesToolName('update-code-from-shorthand.instructions.md', 'update-code-from-shorthand'), 'bare name matches .instructions.md');
+      assert(matchesToolName('update-docs-on-code-change.instructions.md', 'update-docs-on-code-change'), 'bare name matches .instructions.md');
+    },
+    'matchesToolName: bare name matches .prompt.md (singular)': () => {
+      assert(matchesToolName('my-prompt.prompt.md', 'my-prompt'), 'bare name matches .prompt.md');
+    },
+    'matchesToolName: bare name matches .prompts.md (plural)': () => {
+      assert(matchesToolName('my-prompt.prompts.md', 'my-prompt'), 'bare name matches .prompts.md');
+    },
+    'matchesToolName: bare name matches .workflow.md (singular)': () => {
+      assert(matchesToolName('my-flow.workflow.md', 'my-flow'), 'bare name matches .workflow.md');
+    },
+    'matchesToolName: bare name matches .workflows.md (plural)': () => {
+      assert(matchesToolName('my-flow.workflows.md', 'my-flow'), 'bare name matches .workflows.md');
+    },
+    'matchesToolName: bare name matches plain .md': () => {
+      assert(matchesToolName('my-tool.md', 'my-tool'), 'bare name matches plain .md');
+    },
+    'matchesToolName: case-insensitive matching': () => {
+      assert(matchesToolName('My-Agent.Agent.MD', 'my-agent'), 'case-insensitive match');
+      assert(matchesToolName('HTML-CSS-Style-Color-Guide.Instructions.MD', 'html-css-style-color-guide'), 'case-insensitive plural instructions match');
+    },
+    'matchesToolName: multiple names across categories': () => {
+      const items = [
+        'html-css-style-color-guide.instructions.md',
+        'update-code-from-shorthand.instructions.md',
+        'update-docs-on-code-change.instructions.md',
+      ];
+      const names = ['html-css-style-color-guide', 'update-code-from-shorthand', 'update-docs-on-code-change'];
+      for (const name of names) {
+        const matched = items.filter(item => matchesToolName(item, name));
+        assertEqual(matched.length, 1, `exactly one match for '${name}'`);
+      }
+    },
+    'matchesToolName: no false positives across categories': () => {
+      assert(!matchesToolName('my-agent.agent.md', 'other-agent'), 'no false positive for agent');
+      assert(!matchesToolName('my-prompt.prompt.md', 'my-agent'), 'no cross-category false positive');
+      assert(!matchesToolName('my-flow.workflow.md', 'my-flo'), 'partial name does not match');
     },
   });
 }

@@ -1,4 +1,5 @@
 import axios, { AxiosError } from 'axios';
+import { spawnSync } from 'child_process';
 import type { CopilotItem, GitHubFileEntry, RepositorySource, ToolCategory } from '../types.js';
 import { ORDERED_CATEGORIES } from '../types.js';
 import { cache, buildCacheKey } from './cache.js';
@@ -17,9 +18,24 @@ export function buildApiUrl(repo: RepositorySource, repoPath: string): string {
 }
 
 export function getToken(repo?: RepositorySource, enterpriseToken?: string): string | undefined {
-  // Priority: GITHUB_TOKEN env var → enterprise token in config → undefined
+  // Priority: GITHUB_TOKEN → GH_TOKEN → gh CLI → enterprise token → undefined
   const envToken = process.env['GITHUB_TOKEN'];
   if (envToken) {return envToken;}
+
+  const ghEnvToken = process.env['GH_TOKEN'];
+  if (ghEnvToken) {return ghEnvToken;}
+
+  // Fall back to the token stored by `gh auth login`
+  try {
+    const result = spawnSync('gh', ['auth', 'token'], { encoding: 'utf-8', timeout: 3000 });
+    if (result.status === 0 && result.stdout) {
+      const token = result.stdout.trim();
+      if (token) {return token;}
+    }
+  } catch {
+    // gh CLI not available or not authenticated — silent fallback
+  }
+
   if (enterpriseToken && repo?.baseUrl) {return enterpriseToken;}
   return undefined;
 }
@@ -149,8 +165,13 @@ export async function fetchCategory(
   let entries: GitHubFileEntry[];
   try {
     entries = await getDirectoryContents(repo, repoPath, token, cacheTtl);
-  } catch {
-    return []; // silently skip missing category folders
+  } catch (err) {
+    // Only silently skip "path not found" (404) errors — category folder may not exist in this repo.
+    // Re-throw rate-limit, auth, network, and other errors so callers can surface them.
+    if (err instanceof Error && /not found/i.test(err.message)) {
+      return [];
+    }
+    throw err;
   }
 
   const items: CopilotItem[] = [];
@@ -203,10 +224,18 @@ export async function fetchAllTools(
   );
 
   const items: CopilotItem[] = [];
+  let firstError: Error | undefined;
   for (const result of results) {
     if (result.status === 'fulfilled') {
       items.push(...result.value);
+    } else if (!firstError) {
+      firstError = result.reason instanceof Error ? result.reason : new Error(String(result.reason));
     }
+  }
+
+  // Surface the error if no items were returned (e.g. rate-limited on all categories)
+  if (items.length === 0 && firstError) {
+    throw firstError;
   }
   return items;
 }
@@ -221,10 +250,18 @@ export async function fetchAllToolsFromSources(
   );
 
   const items: CopilotItem[] = [];
+  let firstError: Error | undefined;
   for (const result of results) {
     if (result.status === 'fulfilled') {
       items.push(...result.value);
+    } else if (!firstError) {
+      firstError = result.reason instanceof Error ? result.reason : new Error(String(result.reason));
     }
+  }
+
+  // Surface the error if no items were returned across all sources
+  if (items.length === 0 && firstError) {
+    throw firstError;
   }
   return items;
 }

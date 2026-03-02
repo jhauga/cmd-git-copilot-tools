@@ -36,8 +36,15 @@ cmd-copilot-tools --all
 # Browse only agents
 cmd-copilot-tools --agent
 
-# Download a specific prompt
+# Download a specific prompt (extension optional)
 cmd-copilot-tools --prompt my-prompt.prompt.md
+cmd-copilot-tools --prompt my-prompt
+
+# Download across multiple categories in one command
+cmd-copilot-tools --skill quasi-coder --instruction html-css-style-color-guide,update-code-from-shorthand
+
+# If a name is not found it is reported at the end instead of aborting
+cmd-copilot-tools --prompt my-prompt --instruction existing-one,missing-one
 
 # Search across all tools
 cmd-copilot-tools --search copilot
@@ -121,12 +128,12 @@ cmd-copilot-tools [options]
 | --- | --- |
 | *(no args)* | Launch interactive terminal browser |
 | `--all` | Show all categories pre-expanded |
-| `--agent [name,...]` | Show agents, or download named agent(s) |
-| `--instruction [name,...]` | Show instructions, or download named instruction(s) |
+| `--agent [name,...]` | Show agents, or download named agent(s). Extension (`.agent.md`) is optional |
+| `--instruction [name,...]` | Show instructions, or download named instruction(s). Extension (`.instructions.md`) is optional |
 | `--plugin [name,...]` | Show plugins, or download named plugin(s) |
-| `--prompt [name,...]` | Show prompts, or download named prompt(s) |
+| `--prompt [name,...]` | Show prompts, or download named prompt(s). Extension (`.prompt.md`) is optional |
 | `--skill [name,...]` | Show skills, or download named skill(s) |
-| `--workflow [name,...]` | Show workflows, or download named workflow(s) |
+| `--workflow [name,...]` | Show workflows, or download named workflow(s). Extension (`.workflow.md`) is optional |
 | `--search <term>[,term]` | Search tools (non-interactive output) |
 | `--source <url> [label]` | Add a GitHub repository as a source |
 | `--use <url\|label>` | Use a specific source for this run |
@@ -138,8 +145,29 @@ cmd-copilot-tools [options]
 | `--test:log` | Run all tests and save log to `logs/` |
 | `--test:<name>:log` | Run specific suite and save log |
 | `--log` | Save test log to `logs/` (requires `--test`) |
+| `--permission on` | Enable GitHub authentication (prompts on first use) |
+| `--permission off` | Disable GitHub authentication (uses unauthenticated 60 req/hr) |
 | `-h`, `--help`, `/?` | Show help |
 | `-v`, `--version` | Show version |
+
+### Multi-category downloads
+
+Multiple category flags can be combined in a single command. All requested categories are fetched in one network round-trip:
+
+```bash
+cmd-copilot-tools --skill quasi-coder --instruction html-css-style-color-guide,update-code-from-shorthand
+```
+
+Behaviour when combining flags:
+
+- **Category with names** — each name is downloaded; files not found are reported as a notice at the end (the rest still download).
+- **Category without names** — the category is skipped and a notice is printed at the end. Use the flag alone (e.g. `--instruction`) to open the interactive browser for that category.
+
+```
+Notices:
+  --prompt: no names provided, skipped (use --prompt alone to browse interactively)
+  Tool 'bad-name' not found. Use --search to find available tools.
+```
 
 ## Download Folder Structure
 
@@ -219,17 +247,33 @@ Not all source repositories follow the default `.github/{category}` folder struc
 
 ## Authentication
 
-Set the `GITHUB_TOKEN` environment variable for authenticated API access:
+On the first run (any command other than `--help`), the tool shows a one-time
+permission prompt explaining GitHub token resolution and asking whether to allow
+authenticated API access.
+
+You can also manage this at any time:
 
 ```bash
-export GITHUB_TOKEN=your_token_here
-cmd-copilot-tools
+# Enable GitHub authentication (re-prompts if currently off)
+cmd-copilot-tools --permission on
+
+# Disable GitHub authentication (reverts to 60 req/hr)
+cmd-copilot-tools --permission off
 ```
 
-| Auth Method | Rate Limit |
+Token resolution order when authentication is enabled (first match wins):
+
+1. `GITHUB_TOKEN` environment variable
+2. `GH_TOKEN` environment variable
+3. `gh` CLI stored credentials — run `gh auth login` once
+
+| Auth state | Rate limit |
 | --- | --- |
-| No token (default) | 60 requests/hour |
-| `GITHUB_TOKEN` env var | 5,000 requests/hour |
+| Disabled or no token found | 60 requests/hour |
+| Enabled (any token source) | 5,000 requests/hour |
+
+**No credentials are stored by this tool.** Only a boolean permission flag is
+saved to disk. See [docs/permissions.md](docs/permissions.md) for full details.
 
 ## Configuration Reference
 

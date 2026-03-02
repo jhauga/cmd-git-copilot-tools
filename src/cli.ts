@@ -6,6 +6,8 @@ import { downloadItem, downloadItemsByName } from './engine/download.js';
 import { searchTools, filterByCategory } from './engine/search.js';
 import { runInteractiveUI, printToolsList } from './ui/terminal.js';
 import { readConfirm, readLine } from './ui/input.js';
+import { loadPermissions, savePermissions } from './engine/permissions.js';
+import type { PermissionState } from './engine/permissions.js';
 import type { ToolCategory, RepositorySource } from './types.js';
 import { CATEGORY_LABELS, ORDERED_CATEGORIES, CATEGORY_DISPLAY } from './types.js';
 import { printSuiteResult, printSummary, logResults } from './test/runner.js';
@@ -61,6 +63,10 @@ OPTIONS:
   --test:<name>:log             Run specific suite and save results to logs/ folder
   --log                         Save test results to logs/ (requires --test)
 
+  --permission <on|off>         Enable or disable GitHub authentication
+                                  on  - request permission (shows auth options, re-prompts if off)
+                                  off - disable GitHub auth (reverts to 60 req/hr unauthenticated)
+
   -h, --help, /?                Show this help message
   -v, --version                 Show version
 
@@ -69,7 +75,9 @@ EXAMPLES:
   cmd-copilot-tools --all
   cmd-copilot-tools --agent
   cmd-copilot-tools --agent my-agent.agent.md
+  cmd-copilot-tools --agent my-agent
   cmd-copilot-tools --prompt my-prompt,other-prompt
+  cmd-copilot-tools --instruction html-css-style-color-guide,update-code-from-shorthand
   cmd-copilot-tools --search copilot
   cmd-copilot-tools --source https://github.com/owner/repo myrepo
   cmd-copilot-tools --use myrepo --skill my-skill
@@ -78,10 +86,12 @@ EXAMPLES:
   cmd-copilot-tools --test:search
   cmd-copilot-tools --test:full:log
   cmd-copilot-tools --test:config --log
+  cmd-copilot-tools --permission on
+  cmd-copilot-tools --permission off
 
 AUTHENTICATION:
-  Set GITHUB_TOKEN environment variable for authenticated API access (5,000 req/hr).
-  Without a token, the rate limit is 60 req/hr.
+  See docs/permissions.md for full details on GitHub token resolution.
+  Manage access with: cmd-copilot-tools --permission <on|off>
 
 CONFIG FILE:
   ${getConfigPath()}
@@ -147,7 +157,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       arg === '--agent' || arg === '--instruction' || arg === '--plugin' ||
       arg === '--prompt' || arg === '--skill' || arg === '--workflow' ||
       arg === '--search' || arg === '--source' || arg === '--use' ||
-      arg === '--set-default' || arg === '--remove-source'
+      arg === '--set-default' || arg === '--remove-source' || arg === '--permission'
     ) {
       const flag = arg.slice(2);
       const vals: string[] = [];
@@ -189,7 +199,7 @@ function splitToolNames(names: string[]): string[] {
   return names.flatMap(n => n.split(',').map(s => s.trim()).filter(Boolean));
 }
 
-async function handleSourceAdd(config: ReturnType<typeof loadConfig>, vals: string[]): Promise<void> {
+async function handleSourceAdd(config: ReturnType<typeof loadConfig>, vals: string[], token?: string): Promise<void> {
   if (vals.length === 0) {
     console.error('--source requires a URL. Example: --source https://github.com/owner/repo');
     process.exit(1);
@@ -200,7 +210,6 @@ async function handleSourceAdd(config: ReturnType<typeof loadConfig>, vals: stri
 
   try {
     const newSource = addSource(config, url!, label);
-    const token = getToken(newSource, config.enterpriseToken);
 
     console.log(`\nAdding source: ${url}${label ? ` (${label})` : ''}`);
     console.log('Checking repository for standard folders...');
@@ -250,10 +259,10 @@ async function handleCategoryFlag(
   flag: string,
   vals: string[],
   config: ReturnType<typeof loadConfig>,
+  token: string | undefined,
   useSource?: string
 ): Promise<void> {
   const category = flag as ToolCategory;
-  const token = getToken(undefined, config.enterpriseToken);
 
   // Resolve sources to use
   let sources = config.sources;
@@ -334,6 +343,77 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
   }
 }
 
+const AUTH_RESOLUTION_TEXT = `\
+Token resolution order (first match wins):
+  1. GITHUB_TOKEN environment variable
+  2. GH_TOKEN environment variable
+  3. gh CLI  →  run: gh auth login
+
+No credentials are stored by this tool. Tokens are read at runtime only.`;
+
+/** Shown on the very first non-help invocation. Saves the user's choice. */
+async function runFirstTimePermissionPrompt(perms: PermissionState): Promise<PermissionState> {
+  console.log(`
+Welcome to cmd-copilot-tools!
+
+This tool can use your GitHub credentials to access the GitHub API with a
+higher rate limit (5,000 req/hr vs 60 req/hr unauthenticated).
+
+${AUTH_RESOLUTION_TEXT}
+`);
+  const allow = await readConfirm('Allow GitHub authentication?');
+  const updated: PermissionState = {
+    ...perms,
+    githubAuthEnabled: allow,
+    firstTimeUse: false,
+  };
+  savePermissions(updated);
+  if (allow) {
+    console.log('\nGitHub authentication enabled.\n');
+  } else {
+    console.log('\nRunning without GitHub authentication (60 req/hr limit).\n');
+    console.log('You can enable it later with: cmd-copilot-tools --permission on\n');
+  }
+  return updated;
+}
+
+/** Handle `--permission on|off` explicitly. */
+async function handlePermissionFlag(value: string, perms: PermissionState): Promise<void> {
+  const val = value.toLowerCase().trim();
+
+  if (val !== 'on' && val !== 'off') {
+    console.error(`--permission requires 'on' or 'off'. Example: --permission on`);
+    process.exit(1);
+  }
+
+  if (val === 'off') {
+    const updated: PermissionState = { ...perms, githubAuthEnabled: false, firstTimeUse: false };
+    savePermissions(updated);
+    console.log('GitHub authentication disabled. Running without a token limits API access to 60 req/hr.');
+    console.log('To re-enable, run: cmd-copilot-tools --permission on');
+    return;
+  }
+
+  // val === 'on'
+  if (perms.githubAuthEnabled) {
+    console.log(`GitHub authentication is already enabled.\n`);
+    console.log(AUTH_RESOLUTION_TEXT);
+    console.log('\nTo disable, run: cmd-copilot-tools --permission off');
+    return;
+  }
+
+  // Currently off — run the permission prompt
+  console.log(`\n${AUTH_RESOLUTION_TEXT}\n`);
+  const allow = await readConfirm('Allow GitHub authentication?');
+  const updated: PermissionState = { ...perms, githubAuthEnabled: allow, firstTimeUse: false };
+  savePermissions(updated);
+  if (allow) {
+    console.log('\nGitHub authentication enabled.\n');
+  } else {
+    console.log('\nPermission not granted. Running without GitHub authentication (60 req/hr limit).\n');
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const { flags, values, extra } = parseArgs(argv);
@@ -347,6 +427,25 @@ async function main(): Promise<void> {
     console.log(`cmd-copilot-tools v${getVersion()}`);
     return;
   }
+
+  // Load (and if needed reset) permission state
+  let perms = loadPermissions();
+
+  // First-time use: show permission prompt before doing anything else
+  if (perms.firstTimeUse) {
+    perms = await runFirstTimePermissionPrompt(perms);
+  }
+
+  // Handle --permission before any network activity
+  if (values.has('permission')) {
+    const permVal = values.get('permission')?.[0] ?? '';
+    await handlePermissionFlag(permVal, perms);
+    return;
+  }
+
+  // Resolve token only when the user has granted permission
+  const resolveToken = (enterpriseToken?: string) =>
+    perms.githubAuthEnabled ? getToken(undefined, enterpriseToken) : undefined;
 
   // --log requires --test
   if (flags.has('log') && !flags.has('test')) {
@@ -370,7 +469,7 @@ async function main(): Promise<void> {
   }
 
   if (values.has('source')) {
-    await handleSourceAdd(config, values.get('source')!);
+    await handleSourceAdd(config, values.get('source')!, resolveToken(config.enterpriseToken));
     return;
   }
 
@@ -428,7 +527,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const query = buildSearchQuery(searchTerms);
-    const token = getToken(undefined, config.enterpriseToken);
+    const token = resolveToken(config.enterpriseToken);
 
     let sources = config.sources;
     if (useSource) {
@@ -462,11 +561,61 @@ async function main(): Promise<void> {
     ['workflow', 'workflows'],
   ];
 
-  for (const [flag, category] of categoryFlags) {
-    if (values.has(flag)) {
-      await handleCategoryFlag(category, values.get(flag)!, config, useSource);
+  const activeFlags = categoryFlags.filter(([flag]) => values.has(flag));
+
+  if (activeFlags.length > 0) {
+    const anyHasArgs = activeFlags.some(
+      ([flag]) => splitToolNames(values.get(flag) ?? []).length > 0
+    );
+
+    // Single flag with no args: interactive/list mode (existing behaviour)
+    if (activeFlags.length === 1 && !anyHasArgs) {
+      const [flag, category] = activeFlags[0]!;
+      await handleCategoryFlag(category, values.get(flag)!, config, resolveToken(config.enterpriseToken), useSource);
       return;
     }
+
+    // Batch mode: process all active flags together, fetch tools once
+    const token = resolveToken(config.enterpriseToken);
+    let sources = config.sources;
+    if (useSource) {
+      const src = findSource(config, useSource);
+      if (!src) {
+        console.error(`Source '${useSource}' not found. Use --list-source to see configured sources.`);
+        process.exit(1);
+      }
+      sources = [src];
+    }
+
+    const allItems = await fetchAllToolsFromSources(sources, token, config.cacheTimeout);
+    const notices: string[] = [];
+
+    for (const [flag, category] of activeFlags) {
+      const toolNames = splitToolNames(values.get(flag) ?? []);
+
+      if (toolNames.length === 0) {
+        notices.push(`--${flag}: no names provided, skipped (use --${flag} alone to browse interactively)`);
+        continue;
+      }
+
+      const catItems = filterByCategory(allItems, category);
+      for (const name of toolNames) {
+        try {
+          await downloadItemsByName(catItems, [name], process.cwd(), token);
+        } catch (err) {
+          notices.push(err instanceof Error ? err.message : String(err));
+        }
+      }
+    }
+
+    if (notices.length > 0) {
+      console.log('\nNotices:');
+      for (const notice of notices) {
+        console.log(`  ${notice}`);
+      }
+    }
+
+    return;
   }
 
   // Default: interactive terminal UI
@@ -475,7 +624,7 @@ async function main(): Promise<void> {
     await runInteractiveUI(config, initialCategory);
   } else {
     // Non-interactive (piped): print all tools
-    const token = getToken(undefined, config.enterpriseToken);
+    const token = resolveToken(config.enterpriseToken);
     const items = await fetchAllToolsFromSources(config.sources, token, config.cacheTimeout);
     printToolsList(items, 'all');
   }

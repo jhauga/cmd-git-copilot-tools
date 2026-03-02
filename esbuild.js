@@ -38,6 +38,10 @@ async function main() {
 		banner: {
 			js: '#!/usr/bin/env node',
 		},
+		define: {
+			// Baked-in build ID — used at runtime to detect a new build and reset firstTimeUse
+			'__BUILD_ID__': JSON.stringify(Date.now().toString()),
+		},
 		logLevel: 'silent',
 		plugins: [
 			/* add to the end of plugins array */

@@ -28,6 +28,14 @@ export function getDefaultSources(): RepositorySource[] {
       owner: 'jhauga',
       repo: 'cmd-git-copilot-tools',
       label: 'CMD Git Copilot Tools',
+      folderMappings: {
+        skills: '.github/skills',
+        agents: null,
+        instructions: null,
+        plugins: null,
+        prompts: null,
+        workflows: null,
+      },
     },
   ];
 }
