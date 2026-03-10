@@ -5,16 +5,18 @@ import { fetchAllToolsFromSources, fetchCategory, getToken, fetchDirectoryTree }
 import { downloadItem, downloadItemsByName } from './engine/download.js';
 import { searchTools, filterByCategory } from './engine/search.js';
 import { runInteractiveUI, printToolsList } from './ui/terminal.js';
-import { readConfirm, readLine } from './ui/input.js';
+import { readConfirm, readLine, readAuthPermission } from './ui/input.js';
 import { loadPermissions, savePermissions } from './engine/permissions.js';
 import type { PermissionState } from './engine/permissions.js';
-import type { ToolCategory, RepositorySource } from './types.js';
+import type { ToolCategory, RepositorySource, Config } from './types.js';
 import { CATEGORY_LABELS, ORDERED_CATEGORIES, CATEGORY_DISPLAY } from './types.js';
 import { printSuiteResult, printSummary, logResults } from './test/runner.js';
 import type { SuiteResult } from './test/runner.js';
 import { runSearchSuite } from './test/unit/search.js';
 import { runConfigSuite } from './test/unit/config.js';
 import { runDownloadSuite } from './test/unit/download.js';
+import { runCliSuite } from './test/unit/cli.js';
+import { runPermissionsSuite } from './test/unit/permissions.js';
 import { runFullTest } from './test/full.js';
 
 // Load version from package.json
@@ -52,7 +54,10 @@ OPTIONS:
   --search <term>[,term...]     Search across all tool categories (non-interactive)
 
   --source <url> [label]        Add a GitHub repository as a source
-  --use <url|label>             Use a specific source for this invocation
+  --use <url|label|#>[/path]    Use a specific source for this invocation.
+                                Can be a URL, label, or number from --list-source.
+                                Optionally append a path (e.g., 2/branch/tools)
+  --url <url>                   Use the url passed as a temp source for download
   --set-default <url|label>     Set the default source permanently
   --remove-source <url|label>   Remove a configured source
   --list-source                 List all configured source repositories
@@ -63,9 +68,11 @@ OPTIONS:
   --test:<name>:log             Run specific suite and save results to logs/ folder
   --log                         Save test results to logs/ (requires --test)
 
-  --permission <on|off>         Enable or disable GitHub authentication
-                                  on  - request permission (shows auth options, re-prompts if off)
-                                  off - disable GitHub auth (reverts to 60 req/hr unauthenticated)
+  --permission [on|off|always]  Manage GitHub authentication
+                                  (no arg) - show current permission status
+                                  on       - enable for current build (re-prompts after builds)
+                                  off      - disable GitHub auth (60 req/hr unauthenticated)
+                                  always   - enable permanently (no prompts after builds)
 
   -h, --help, /?                Show this help message
   -v, --version                 Show version
@@ -80,18 +87,25 @@ EXAMPLES:
   cmd-copilot-tools --instruction html-css-style-color-guide,update-code-from-shorthand
   cmd-copilot-tools --search copilot
   cmd-copilot-tools --source https://github.com/owner/repo myrepo
+  cmd-copilot-tools --list-source
+  cmd-copilot-tools --use 2 --skill my-skill
   cmd-copilot-tools --use myrepo --skill my-skill
+  cmd-copilot-tools --use myrepo/branch/tools --agent my-agent
+  cmd-copilot-tools --use 2/branch/tools --agent my-agent
+  cmd-copilot-tools --url https://github.com/owner/repo --agent my-agent
   cmd-copilot-tools --list-source
   cmd-copilot-tools --test
   cmd-copilot-tools --test:search
   cmd-copilot-tools --test:full:log
   cmd-copilot-tools --test:config --log
+  cmd-copilot-tools --permission
   cmd-copilot-tools --permission on
   cmd-copilot-tools --permission off
+  cmd-copilot-tools --permission always
 
 AUTHENTICATION:
   See docs/permissions.md for full details on GitHub token resolution.
-  Manage access with: cmd-copilot-tools --permission <on|off>
+  Manage access with: cmd-copilot-tools --permission <on|off|always>
 
 CONFIG FILE:
   ${getConfigPath()}
@@ -156,7 +170,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (
       arg === '--agent' || arg === '--instruction' || arg === '--plugin' ||
       arg === '--prompt' || arg === '--skill' || arg === '--workflow' ||
-      arg === '--search' || arg === '--source' || arg === '--use' ||
+      arg === '--search' || arg === '--source' || arg === '--use' || arg === '--url' ||
       arg === '--set-default' || arg === '--remove-source' || arg === '--permission'
     ) {
       const flag = arg.slice(2);
@@ -197,6 +211,156 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 function splitToolNames(names: string[]): string[] {
   return names.flatMap(n => n.split(',').map(s => s.trim()).filter(Boolean));
+}
+
+/**
+ * Parse a --use value that may contain an appended path.
+ * Examples:
+ *   - "mylabel" -> { base: "mylabel", path: undefined }
+ *   - "mylabel/develop" -> { base: "mylabel", path: "develop" }
+ *   - "https://github.com/owner/repo" -> { base: "https://github.com/owner/repo", path: undefined }
+ *   - "https://github.com/owner/repo/extra/path" -> { base: "https://github.com/owner/repo", path: "extra/path" }
+ */
+export function parseUseSource(useSource: string): { base: string; appendedPath?: string } {
+  // Check if it's a URL
+  if (useSource.startsWith('http://') || useSource.startsWith('https://')) {
+    // Try to parse as GitHub URL
+    const parsed = parseGitHubUrl(useSource);
+    if (parsed) {
+      // It's a valid GitHub URL, extract base
+      const baseUrl = parsed.baseUrl || 'https://github.com';
+      let base = `${baseUrl}/${parsed.owner}/${parsed.repo}`;
+      // Return with no appended path (branch is handled separately)
+      return { base, appendedPath: undefined };
+    }
+    // Not a valid GitHub URL, treat entire string as base
+    return { base: useSource, appendedPath: undefined };
+  }
+
+  // It's a label or label/path
+  // Split on first slash to separate label from path
+  const slashIndex = useSource.indexOf('/');
+  if (slashIndex === -1) {
+    return { base: useSource, appendedPath: undefined };
+  }
+
+  const base = useSource.substring(0, slashIndex);
+  const appendedPath = useSource.substring(slashIndex + 1);
+  
+  return { base, appendedPath: appendedPath || undefined };
+}
+
+/**
+ * Resolve a --use source specification to an actual RepositorySource.
+ * If the source has an appended path, it is added to the branch property.
+ * Handles cases like:
+ *   - "mylabel" -> finds label
+ *   - "mylabel/branch" -> finds label, sets branch
+ *   - "mylabel/tree/branch" -> finds label, sets branch (strips /tree/)
+ *   - "owner/repo" -> finds by owner/repo
+ *   - "owner/repo/branch" -> finds by owner/repo, sets branch
+ *   - "https://github.com/owner/repo/tree/branch" -> finds source, uses branch from URL
+ *   - "1" -> finds source by 1-based index
+ *   - "2/branch" -> finds source by index 2, sets branch
+ *   - "2/tree/branch" -> finds source by index 2, sets branch (strips /tree/)
+ */
+export function resolveUseSource(config: Config, useSource: string): RepositorySource | undefined {
+  // Check if useSource starts with a digit (numeric index)
+  const numericMatch = useSource.match(/^(\d+)(\/.*)?$/);
+  if (numericMatch) {
+    const index = parseInt(numericMatch[1]!, 10) - 1; // Convert to 0-based index
+    let appendedPath = numericMatch[2] ? numericMatch[2].substring(1) : undefined; // Remove leading slash
+    
+    // Handle /tree/ syntax (e.g., "2/tree/branch" -> branch = "branch")
+    if (appendedPath && appendedPath.startsWith('tree/')) {
+      appendedPath = appendedPath.substring(5); // Remove "tree/"
+    }
+    
+    if (index >= 0 && index < config.sources.length) {
+      const src = config.sources[index]!;
+      
+      if (appendedPath) {
+        // Clone the source and add the appended path
+        const cloned: RepositorySource = { ...src };
+        if (cloned.branch) {
+          cloned.branch = `${cloned.branch}/${appendedPath}`;
+        } else {
+          cloned.branch = appendedPath;
+        }
+        return cloned;
+      }
+      
+      return src;
+    }
+    
+    // Invalid numeric index
+    return undefined;
+  }
+  
+  // First, try to find the source as-is (no appended path)
+  let src = findSource(config, useSource);
+  if (src) {
+    return src;
+  }
+
+  // If not found and it's a URL, parse and try again
+  if (useSource.startsWith('http://') || useSource.startsWith('https://')) {
+    const parsed = parseGitHubUrl(useSource);
+    if (parsed) {
+      const baseUrl = parsed.baseUrl || 'https://github.com';
+      const base = `${baseUrl}/${parsed.owner}/${parsed.repo}`;
+      src = findSource(config, base);
+      
+      if (src) {
+        // If the URL contains branch info, apply it
+        if (parsed.branch) {
+          const cloned: RepositorySource = { ...src };
+          cloned.branch = parsed.branch;
+          return cloned;
+        }
+        return src;
+      }
+    }
+    return undefined;
+  }
+
+  // Not a URL, try splitting at slashes to find base + appended path
+  // Handle GitHub-style /tree/ syntax: "label/tree/branch" -> "label" with branch "branch"
+  const treeIndex = useSource.indexOf('/tree/');
+  if (treeIndex !== -1) {
+    const base = useSource.substring(0, treeIndex);
+    const branch = useSource.substring(treeIndex + 6); // Skip "/tree/"
+    
+    src = findSource(config, base);
+    if (src && branch) {
+      const cloned: RepositorySource = { ...src };
+      cloned.branch = branch;
+      return cloned;
+    }
+  }
+
+  // Try from right to left: "owner/repo/feature/branch" -> try "owner/repo/feature", then "owner/repo"
+  const parts = useSource.split('/');
+  
+  for (let i = parts.length - 1; i > 0; i--) {
+    const base = parts.slice(0, i).join('/');
+    const appendedPath = parts.slice(i).join('/');
+    
+    src = findSource(config, base);
+    if (src && appendedPath) {
+      // Found a match! Clone and add the appended path
+      const cloned: RepositorySource = { ...src };
+      if (cloned.branch) {
+        cloned.branch = `${cloned.branch}/${appendedPath}`;
+      } else {
+        cloned.branch = appendedPath;
+      }
+      return cloned;
+    }
+  }
+
+  // No match found
+  return undefined;
 }
 
 async function handleSourceAdd(config: ReturnType<typeof loadConfig>, vals: string[], token?: string): Promise<void> {
@@ -260,14 +424,17 @@ async function handleCategoryFlag(
   vals: string[],
   config: ReturnType<typeof loadConfig>,
   token: string | undefined,
-  useSource?: string
+  useSource?: string,
+  tempSource?: RepositorySource
 ): Promise<void> {
   const category = flag as ToolCategory;
 
   // Resolve sources to use
   let sources = config.sources;
-  if (useSource) {
-    const src = findSource(config, useSource);
+  if (tempSource) {
+    sources = [tempSource];
+  } else if (useSource) {
+    const src = resolveUseSource(config, useSource);
     if (!src) {
       console.error(`Source '${useSource}' not found. Use --list-source to see configured sources.`);
       process.exit(1);
@@ -302,7 +469,7 @@ async function handleCategoryFlag(
   }
 }
 
-const KNOWN_UNIT_TESTS = ['search', 'config', 'download', 'full'];
+const KNOWN_UNIT_TESTS = ['search', 'config', 'download', 'cli', 'permissions', 'full'];
 
 async function runTests(unitName: string | undefined, doLog: boolean): Promise<void> {
   const suites: SuiteResult[] = [];
@@ -312,6 +479,8 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
     suites.push(await runSearchSuite());
     suites.push(await runConfigSuite());
     suites.push(await runDownloadSuite());
+    suites.push(await runCliSuite());
+    suites.push(await runPermissionsSuite());
     suites.push(await runFullTest());
   } else if (unitName === 'search') {
     suites.push(await runSearchSuite());
@@ -319,6 +488,10 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
     suites.push(await runConfigSuite());
   } else if (unitName === 'download') {
     suites.push(await runDownloadSuite());
+  } else if (unitName === 'cli') {
+    suites.push(await runCliSuite());
+  } else if (unitName === 'permissions') {
+    suites.push(await runPermissionsSuite());
   } else if (unitName === 'full') {
     suites.push(await runFullTest());
   } else {
@@ -361,14 +534,34 @@ higher rate limit (5,000 req/hr vs 60 req/hr unauthenticated).
 
 ${AUTH_RESOLUTION_TEXT}
 `);
-  const allow = await readConfirm('Allow GitHub authentication?');
+  console.log('To always allow authentication without prompting after builds, input [always]\n');
+  const response = await readAuthPermission('Allow GitHub authentication?');
+  
+  let authMode: 'off' | 'on' | 'always';
+  let githubAuthEnabled: boolean;
+  
+  if (response === 'always') {
+    authMode = 'always';
+    githubAuthEnabled = true;
+  } else if (response === 'yes') {
+    authMode = 'on';
+    githubAuthEnabled = true;
+  } else {
+    authMode = 'off';
+    githubAuthEnabled = false;
+  }
+  
   const updated: PermissionState = {
     ...perms,
-    githubAuthEnabled: allow,
+    githubAuthEnabled,
+    authMode,
     firstTimeUse: false,
   };
   savePermissions(updated);
-  if (allow) {
+  
+  if (authMode === 'always') {
+    console.log('\nGitHub authentication enabled (always mode - no future prompts).\n');
+  } else if (githubAuthEnabled) {
     console.log('\nGitHub authentication enabled.\n');
   } else {
     console.log('\nRunning without GitHub authentication (60 req/hr limit).\n');
@@ -377,37 +570,91 @@ ${AUTH_RESOLUTION_TEXT}
   return updated;
 }
 
-/** Handle `--permission on|off` explicitly. */
+/** Handle `--permission [on|off|always]` explicitly. No argument shows current status. */
 async function handlePermissionFlag(value: string, perms: PermissionState): Promise<void> {
   const val = value.toLowerCase().trim();
 
-  if (val !== 'on' && val !== 'off') {
-    console.error(`--permission requires 'on' or 'off'. Example: --permission on`);
+  // No argument - show current status
+  if (val === '') {
+    console.log('\nCurrent permission status:\n');
+    
+    if (perms.authMode === 'always') {
+      console.log('  GitHub authentication: ENABLED (always mode)');
+      console.log('  Status: Authentication will remain enabled after builds');
+    } else if (perms.authMode === 'on') {
+      console.log('  GitHub authentication: ENABLED');
+      console.log('  Status: Will re-prompt after npm run compile');
+    } else {
+      console.log('  GitHub authentication: DISABLED');
+      console.log('  Status: Using unauthenticated API access (60 req/hr)');
+    }
+    
+    console.log('\nChange permission:');
+    console.log('  cmd-copilot-tools --permission on      (enable with re-prompts)');
+    console.log('  cmd-copilot-tools --permission always  (enable permanently)');
+    console.log('  cmd-copilot-tools --permission off     (disable)');
+    console.log('\nSee docs/permissions.md for more details.');
+    return;
+  }
+
+  if (val !== 'on' && val !== 'off' && val !== 'always') {
+    console.error(`--permission requires 'on', 'off', or 'always', or no argument to show status.`);
+    console.error('Example: cmd-copilot-tools --permission always');
     process.exit(1);
   }
 
   if (val === 'off') {
-    const updated: PermissionState = { ...perms, githubAuthEnabled: false, firstTimeUse: false };
+    const updated: PermissionState = { ...perms, githubAuthEnabled: false, authMode: 'off', firstTimeUse: false };
     savePermissions(updated);
     console.log('GitHub authentication disabled. Running without a token limits API access to 60 req/hr.');
     console.log('To re-enable, run: cmd-copilot-tools --permission on');
     return;
   }
 
-  // val === 'on'
-  if (perms.githubAuthEnabled) {
-    console.log(`GitHub authentication is already enabled.\n`);
+  if (val === 'always') {
+    const updated: PermissionState = { ...perms, githubAuthEnabled: true, authMode: 'always', firstTimeUse: false };
+    savePermissions(updated);
+    console.log('GitHub authentication enabled (always mode - no future prompts after builds).\n');
     console.log(AUTH_RESOLUTION_TEXT);
     console.log('\nTo disable, run: cmd-copilot-tools --permission off');
     return;
   }
 
+  // val === 'on'
+  if (perms.githubAuthEnabled && perms.authMode !== 'off') {
+    const modeText = perms.authMode === 'always' ? ' (always mode)' : '';
+    console.log(`GitHub authentication is already enabled${modeText}.\n`);
+    console.log(AUTH_RESOLUTION_TEXT);
+    console.log('\nTo disable, run: cmd-copilot-tools --permission off');
+    console.log('For always-on mode, run: cmd-copilot-tools --permission always');
+    return;
+  }
+
   // Currently off — run the permission prompt
   console.log(`\n${AUTH_RESOLUTION_TEXT}\n`);
-  const allow = await readConfirm('Allow GitHub authentication?');
-  const updated: PermissionState = { ...perms, githubAuthEnabled: allow, firstTimeUse: false };
+  console.log('To always allow authentication without prompting after builds, input [always]\n');
+  const response = await readAuthPermission('Allow GitHub authentication?');
+  
+  let authMode: 'off' | 'on' | 'always';
+  let githubAuthEnabled: boolean;
+  
+  if (response === 'always') {
+    authMode = 'always';
+    githubAuthEnabled = true;
+  } else if (response === 'yes') {
+    authMode = 'on';
+    githubAuthEnabled = true;
+  } else {
+    authMode = 'off';
+    githubAuthEnabled = false;
+  }
+  
+  const updated: PermissionState = { ...perms, githubAuthEnabled, authMode, firstTimeUse: false };
   savePermissions(updated);
-  if (allow) {
+  
+  if (authMode === 'always') {
+    console.log('\nGitHub authentication enabled (always mode - no future prompts).\n');
+  } else if (githubAuthEnabled) {
     console.log('\nGitHub authentication enabled.\n');
   } else {
     console.log('\nPermission not granted. Running without GitHub authentication (60 req/hr limit).\n');
@@ -462,6 +709,29 @@ async function main(): Promise<void> {
 
   const config = loadConfig();
   const useSource = values.get('use')?.[0];
+  let tempUrl: string | undefined = values.get('url')?.[0];
+
+  // Validate and parse --url if provided
+  let tempSource: RepositorySource | undefined;
+  if (tempUrl) {
+    const parsed = parseGitHubUrl(tempUrl);
+    if (!parsed) {
+      console.error(`Invalid GitHub URL: '${tempUrl}'. Expected: https://github.com/owner/repo`);
+      process.exit(1);
+    }
+    tempSource = {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      branch: parsed.branch,
+      baseUrl: parsed.baseUrl,
+    };
+  }
+
+  // --url and --use are mutually exclusive
+  if (tempUrl && useSource) {
+    console.error('Cannot use both --url and --use options together.');
+    process.exit(1);
+  }
 
   if (flags.has('list-source')) {
     listSources(config);
@@ -530,8 +800,10 @@ async function main(): Promise<void> {
     const token = resolveToken(config.enterpriseToken);
 
     let sources = config.sources;
-    if (useSource) {
-      const src = findSource(config, useSource);
+    if (tempSource) {
+      sources = [tempSource];
+    } else if (useSource) {
+      const src = resolveUseSource(config, useSource);
       if (!src) {
         console.error(`Source '${useSource}' not found. Use --list-source to see configured sources.`);
         process.exit(1);
@@ -571,15 +843,17 @@ async function main(): Promise<void> {
     // Single flag with no args: interactive/list mode (existing behaviour)
     if (activeFlags.length === 1 && !anyHasArgs) {
       const [flag, category] = activeFlags[0]!;
-      await handleCategoryFlag(category, values.get(flag)!, config, resolveToken(config.enterpriseToken), useSource);
+      await handleCategoryFlag(category, values.get(flag)!, config, resolveToken(config.enterpriseToken), useSource, tempSource);
       return;
     }
 
     // Batch mode: process all active flags together, fetch tools once
     const token = resolveToken(config.enterpriseToken);
     let sources = config.sources;
-    if (useSource) {
-      const src = findSource(config, useSource);
+    if (tempSource) {
+      sources = [tempSource];
+    } else if (useSource) {
+      const src = resolveUseSource(config, useSource);
       if (!src) {
         console.error(`Source '${useSource}' not found. Use --list-source to see configured sources.`);
         process.exit(1);

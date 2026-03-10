@@ -146,5 +146,35 @@ export async function runConfigSuite(): Promise<SuiteResult> {
         'should throw for unknown source'
       );
     },
+    'parseGitHubUrl: --url option use case with standard URL': () => {
+      const url = 'https://github.com/myorg/myrepo';
+      const result = parseGitHubUrl(url);
+      assert(result !== null, '--url should accept standard GitHub URL');
+      assertEqual(result!.owner, 'myorg');
+      assertEqual(result!.repo, 'myrepo');
+      assertEqual(result!.baseUrl, undefined);
+      assertEqual(result!.branch, undefined);
+    },
+    'parseGitHubUrl: --url option use case with branch': () => {
+      const url = 'https://github.com/myorg/myrepo/tree/feature-branch';
+      const result = parseGitHubUrl(url);
+      assert(result !== null, '--url should accept URL with branch');
+      assertEqual(result!.owner, 'myorg');
+      assertEqual(result!.repo, 'myrepo');
+      assertEqual(result!.branch, 'feature-branch');
+    },
+    'parseGitHubUrl: --url option use case with enterprise URL': () => {
+      const url = 'https://github.enterprise.com/myorg/myrepo';
+      const result = parseGitHubUrl(url);
+      assert(result !== null, '--url should accept enterprise URL');
+      assertEqual(result!.owner, 'myorg');
+      assertEqual(result!.repo, 'myrepo');
+      assertEqual(result!.baseUrl, 'https://github.enterprise.com');
+    },
+    'parseGitHubUrl: --url option rejects invalid URL': () => {
+      const invalidUrl = 'not-a-valid-url';
+      const result = parseGitHubUrl(invalidUrl);
+      assertEqual(result, null, '--url should reject invalid URLs');
+    },
   });
 }

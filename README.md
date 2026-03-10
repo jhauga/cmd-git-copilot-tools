@@ -136,7 +136,8 @@ cmd-copilot-tools [options]
 | `--workflow [name,...]` | Show workflows, or download named workflow(s). Extension (`.workflow.md`) is optional |
 | `--search <term>[,term]` | Search tools (non-interactive output) |
 | `--source <url> [label]` | Add a GitHub repository as a source |
-| `--use <url\|label>` | Use a specific source for this run |
+| `--use <url\|label\|#>[/path]` | Use a specific source for this run. Can be a URL, label, or number from `--list-source` (e.g., `2` or `2/branch/tools`) |
+| `--url <url>` | Use the url passed as a temp source for download |
 | `--set-default <url\|label>` | Set the default source permanently |
 | `--remove-source <url\|label>` | Remove a configured source |
 | `--list-source` | List all configured sources |
@@ -145,8 +146,10 @@ cmd-copilot-tools [options]
 | `--test:log` | Run all tests and save log to `logs/` |
 | `--test:<name>:log` | Run specific suite and save log |
 | `--log` | Save test log to `logs/` (requires `--test`) |
-| `--permission on` | Enable GitHub authentication (prompts on first use) |
+| `--permission` | Show current permission status |
+| `--permission on` | Enable GitHub authentication (prompts on first use or after builds) |
 | `--permission off` | Disable GitHub authentication (uses unauthenticated 60 req/hr) |
+| `--permission always` | Enable GitHub authentication permanently (no prompts after builds) |
 | `-h`, `--help`, `/?` | Show help |
 | `-v`, `--version` | Show version |
 
@@ -193,8 +196,21 @@ cmd-copilot-tools --source https://github.com/owner/repo
 # Add with a label for easy reference
 cmd-copilot-tools --source https://github.com/owner/repo myrepo
 
-# Use a specific source for this run only
+# List all configured sources (shows numbered list)
+cmd-copilot-tools --list-source
+
+# Use a specific source by number (from --list-source)
+cmd-copilot-tools --use 2 --prompt
+
+# Use a specific source by label
 cmd-copilot-tools --use myrepo --prompt
+
+# Use a specific source with an appended path (works with numbers or labels)
+cmd-copilot-tools --use myrepo/develop/tools --prompt
+cmd-copilot-tools --use 2/develop/tools --prompt
+
+# Use a URL as a temporary source (without saving to config)
+cmd-copilot-tools --url https://github.com/owner/repo --agent my-agent
 
 # Set a source as the permanent default
 cmd-copilot-tools --set-default myrepo
@@ -249,16 +265,23 @@ Not all source repositories follow the default `.github/{category}` folder struc
 
 On the first run (any command other than `--help`), the tool shows a one-time
 permission prompt explaining GitHub token resolution and asking whether to allow
-authenticated API access.
+authenticated API access. You can respond with `y` for one-time approval (will
+re-prompt after builds), or `always` to enable permanently without future prompts.
 
 You can also manage this at any time:
 
 ```bash
-# Enable GitHub authentication (re-prompts if currently off)
+# Check current permission status
+cmd-copilot-tools --permission
+
+# Enable GitHub authentication (re-prompts after builds)
 cmd-copilot-tools --permission on
 
 # Disable GitHub authentication (reverts to 60 req/hr)
 cmd-copilot-tools --permission off
+
+# Enable authentication permanently (no prompts after npm run compile)
+cmd-copilot-tools --permission always
 ```
 
 Token resolution order when authentication is enabled (first match wins):

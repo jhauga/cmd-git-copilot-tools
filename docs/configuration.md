@@ -306,7 +306,31 @@ Then edit your config:
 | Command | Description |
 | --- | --- |
 | `--source <url> [label]` | Add a source repository |
-| `--use <url\|label>` | Use a source for this run only |
+| `--use <url\|label\|#>[/path]` | Use a source for this run only. Can reference by URL, label, or number from `--list-source` (e.g., `2` or `2/branch/tools`) |
+| `--url <url>` | Use the url passed as a temp source for download |
 | `--set-default <url\|label>` | Set the default source permanently |
 | `--remove-source <url\|label>` | Remove a source |
-| `--list-source` | List all configured sources |
+| `--list-source` | List all configured sources (displays numbered list) |
+
+### Examples
+
+```bash
+# List configured sources (shows numbered list)
+cmd-copilot-tools --list-source
+# Output:
+# Configured sources:
+#   1. https://github.com/github/awesome-copilot (GitHub Awesome Copilot) [default]
+#   2. https://github.com/jhauga/awesome-copilot (jhauga)
+
+# Use source by number
+cmd-copilot-tools --use 2 --skill my-skill
+
+# Use source by label
+cmd-copilot-tools --use jhauga --skill my-skill
+
+# Use source by number with appended path
+cmd-copilot-tools --use 2/develop/custom-path --agent my-agent
+
+# Use source by label with appended path
+cmd-copilot-tools --use jhauga/develop/custom-path --agent my-agent
+```

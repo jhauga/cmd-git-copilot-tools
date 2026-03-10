@@ -71,6 +71,23 @@ export async function readConfirm(prompt: string): Promise<boolean> {
   return answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
 }
 
+/**
+ * Read an authentication permission choice with 'always' option.
+ * Returns: 'yes', 'no', or 'always'
+ */
+export async function readAuthPermission(prompt: string): Promise<'yes' | 'no' | 'always'> {
+  const answer = await readLine(`${prompt} [y/N/always] `);
+  const lower = answer.toLowerCase();
+  
+  if (lower === 'always') {
+    return 'always';
+  }
+  if (lower === 'y' || lower === 'yes') {
+    return 'yes';
+  }
+  return 'no';
+}
+
 function parseKeyPress(buf: Buffer): KeyPress {
   const sequence = buf.toString();
   let name: KeyName = sequence;
