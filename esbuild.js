@@ -24,7 +24,8 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
-	const ctx = await esbuild.context({
+	// CLI bundle
+	const cliCtx = await esbuild.context({
 		entryPoints: [
 			'src/cli.ts'
 		],
@@ -48,11 +49,38 @@ async function main() {
 			esbuildProblemMatcherPlugin,
 		],
 	});
+
+	// Library bundle (for programmatic usage)
+	const libCtx = await esbuild.context({
+		entryPoints: [
+			'src/index.ts'
+		],
+		bundle: true,
+		format: 'cjs',
+		minify: production,
+		sourcemap: !production,
+		sourcesContent: false,
+		platform: 'node',
+		outfile: 'dist/index.js',
+		external: ['axios'], // Don't bundle axios for library usage
+		logLevel: 'silent',
+		plugins: [
+			esbuildProblemMatcherPlugin,
+		],
+	});
+
 	if (watch) {
-		await ctx.watch();
+		await Promise.all([
+			cliCtx.watch(),
+			libCtx.watch()
+		]);
 	} else {
-		await ctx.rebuild();
-		await ctx.dispose();
+		await Promise.all([
+			cliCtx.rebuild(),
+			libCtx.rebuild()
+		]);
+		await cliCtx.dispose();
+		await libCtx.dispose();
 	}
 }
 

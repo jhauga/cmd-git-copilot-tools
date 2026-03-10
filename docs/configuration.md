@@ -320,7 +320,7 @@ cmd-copilot-tools --list-source
 # Output:
 # Configured sources:
 #   1. https://github.com/github/awesome-copilot (GitHub Awesome Copilot) [default]
-#   2. https://github.com/jhauga/awesome-copilot (jhauga)
+#   2. https://github.com/<userName>/awesome-copilot (userName)
 
 # Use source by number
 cmd-copilot-tools --use 2 --skill my-skill

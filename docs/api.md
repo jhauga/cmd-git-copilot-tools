@@ -8,7 +8,7 @@ This tool was ported from [jhauga/vscode-git-copilot-tools](https://github.com/j
 
 ## Architecture
 
-```
+```text
 src/
 ├── engine/           ← Host-agnostic API layer (no UI, no process.stdout)
 │   ├── config.ts     ← JSON config management
@@ -37,17 +37,29 @@ Install the package as a dependency of your extension:
 npm install cmd-git-copilot-tools
 ```
 
-Then import from the engine source files. TypeScript source is included in the package:
+Then import from the main package export:
 
 ```typescript
-import { loadConfig, findSource } from 'cmd-git-copilot-tools/src/engine/config.js';
-import { fetchAllToolsFromSources, getToken } from 'cmd-git-copilot-tools/src/engine/github.js';
-import { searchTools, filterByCategory } from 'cmd-git-copilot-tools/src/engine/search.js';
-import { downloadItem } from 'cmd-git-copilot-tools/src/engine/download.js';
+import {
+  loadConfig,
+  findSource,
+  fetchAllToolsFromSources,
+  getToken,
+  searchTools,
+  filterByCategory,
+  downloadItem,
+} from 'cmd-git-copilot-tools';
+
+// TypeScript types are also exported
+import type {
+  Config,
+  RepositorySource,
+  CopilotItem,
+  ToolCategory,
+} from 'cmd-git-copilot-tools';
 ```
 
-> **Note:** Formal package `exports` entries (allowing clean `from 'cmd-git-copilot-tools/config'`
-> imports) are planned for a future release. In the meantime, import directly from the `src/engine/` path as shown above.
+> **Note:** All engine modules are exported from the main package entry point with full TypeScript type definitions.
 
 ---
 
@@ -69,7 +81,7 @@ import {
   listSources,      // Print configured sources to stdout
   parseGitHubUrl,   // Parse a GitHub URL into owner/repo/branch/baseUrl
   getConfigPath,    // Get the absolute path to the config file
-} from 'cmd-git-copilot-tools/src/engine/config.js';
+} from 'cmd-git-copilot-tools';
 
 // Example: load config and find a source
 const config = loadConfig();
@@ -153,6 +165,7 @@ interface CopilotItem {
 #### Authentication
 
 Token resolution order:
+
 1. `GITHUB_TOKEN` environment variable (5,000 req/hr)
 2. `config.enterpriseToken` from config file (for Enterprise GitHub)
 3. Unauthenticated (60 req/hr)

@@ -10,23 +10,57 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/jhauga/cmd-git-copilot-tools"
+    "url": "https://github.com/jhauga/cmd-git-copilot-tools.git"
   },
   "qna": "https://github.com/jhauga/cmd-git-copilot-tools/issues",
   "homepage": "https://github.com/jhauga/cmd-git-copilot-tools",
   "description": "Browse and download agents, instructions, plugins, prompts, skills, and workflows from GitHub repositories with Copilot custom tools. Command-line tool port of the original VS Code extension.",
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "license": "MIT",
+  "keywords": [
+    "github-copilot",
+    "copilot",
+    "ai",
+    "cli",
+    "command-line",
+    "github",
+    "agents",
+    "instructions",
+    "prompts",
+    "skills",
+    "workflows",
+    "automation",
+    "developer-tools"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/",
+    "src/",
+    "LICENSE",
+    "README.md"
+  ],
   "bin": {
     "cmd-copilot-tools": "./dist/cli.js"
   },
-  "main": "./dist/cli.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
-    "build": "npm run check-types && npm run lint && node esbuild.js",
-    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "build": "npm run check-types && npm run lint && node esbuild.js && npm run build:types",
+    "build:types": "tsc --emitDeclarationOnly",
+    "compile": "npm run check-types && npm run lint && node esbuild.js && npm run build:types",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production && npm run build:types",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "test": "node dist/cli.js --test",
@@ -37,6 +71,8 @@
     "test:config:log": "node dist/cli.js --test:config:log",
     "test:download": "node dist/cli.js --test:download",
     "test:download:log": "node dist/cli.js --test:download:log",
+    "test:programmatic": "node dist/cli.js --test:programmatic",
+    "test:programmatic:log": "node dist/cli.js --test:programmatic:log",
     "test:full": "node dist/cli.js --test:full",
     "test:full:log": "node dist/cli.js --test:full:log"
   },

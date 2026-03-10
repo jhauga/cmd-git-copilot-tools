@@ -17,6 +17,7 @@ import { runConfigSuite } from './test/unit/config.js';
 import { runDownloadSuite } from './test/unit/download.js';
 import { runCliSuite } from './test/unit/cli.js';
 import { runPermissionsSuite } from './test/unit/permissions.js';
+import { runProgrammaticSuite } from './test/unit/programmatic.js';
 import { runFullTest } from './test/full.js';
 
 // Load version from package.json
@@ -63,7 +64,7 @@ OPTIONS:
   --list-source                 List all configured source repositories
 
   --test                        Run all tests (unit + integration)
-  --test:<name>                 Run a specific test suite (search, config, download, full)
+  --test:<name>                 Run a specific test suite (search, config, download, cli, permissions, programmatic, full)
   --test:log                    Run all tests and save results to logs/ folder
   --test:<name>:log             Run specific suite and save results to logs/ folder
   --log                         Save test results to logs/ (requires --test)
@@ -96,6 +97,7 @@ EXAMPLES:
   cmd-copilot-tools --list-source
   cmd-copilot-tools --test
   cmd-copilot-tools --test:search
+  cmd-copilot-tools --test:programmatic
   cmd-copilot-tools --test:full:log
   cmd-copilot-tools --test:config --log
   cmd-copilot-tools --permission
@@ -469,7 +471,7 @@ async function handleCategoryFlag(
   }
 }
 
-const KNOWN_UNIT_TESTS = ['search', 'config', 'download', 'cli', 'permissions', 'full'];
+const KNOWN_UNIT_TESTS = ['search', 'config', 'download', 'cli', 'permissions', 'programmatic', 'full'];
 
 async function runTests(unitName: string | undefined, doLog: boolean): Promise<void> {
   const suites: SuiteResult[] = [];
@@ -481,6 +483,7 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
     suites.push(await runDownloadSuite());
     suites.push(await runCliSuite());
     suites.push(await runPermissionsSuite());
+    suites.push(await runProgrammaticSuite());
     suites.push(await runFullTest());
   } else if (unitName === 'search') {
     suites.push(await runSearchSuite());
@@ -492,6 +495,8 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
     suites.push(await runCliSuite());
   } else if (unitName === 'permissions') {
     suites.push(await runPermissionsSuite());
+  } else if (unitName === 'programmatic') {
+    suites.push(await runProgrammaticSuite());
   } else if (unitName === 'full') {
     suites.push(await runFullTest());
   } else {

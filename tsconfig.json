@@ -9,6 +9,8 @@
 		"rootDir": "src",
 		"outDir": "dist",
 		"strict": true,   /* enable all strict type-checking options */
+		"declaration": true,   /* Generate .d.ts files */
+		"declarationMap": true,   /* Generate .d.ts.map files for debugging */
 		/* Additional Checks */
 		// "noImplicitReturns": true, /* Report error when not all code paths in function return a value. */
 		// "noFallthroughCasesInSwitch": true, /* Report errors for fallthrough cases in switch statement. */

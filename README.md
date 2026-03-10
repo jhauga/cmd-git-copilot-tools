@@ -1,10 +1,14 @@
-# ![icon](icon.png) CMD Git Copilot Tools
+# ![icon](https://raw.githubusercontent.com/jhauga/cmd-git-copilot-tools/refs/heads/main/icon.png) CMD Git Copilot Tools
+
+- `ctrl + click` for full [documentation](https://jhauga.github.io/cmd-git-copilot-tools/index.html)
 
 A command-line tool that allows you to browse, preview, and download GitHub Copilot customizations. The default repository is [github/awesome-copilot](https://github.com/github/awesome-copilot), but other repositories with Copilot `agent`, `instruction`, `plugin`, `prompt`, `skill`, and `workflow` tools can be used.
 
 This tool is a command-line port of [jhauga/vscode-git-copilot-tools](https://github.com/jhauga/vscode-git-copilot-tools). The core engine is host-agnostic and can be used as a backend for editor extensions — see [docs/api.md](docs/api.md).
 
 ## Install
+
+### As a CLI tool
 
 ```bash
 npm install -g cmd-git-copilot-tools
@@ -16,6 +20,12 @@ Or run directly:
 npx cmd-git-copilot-tools
 ```
 
+### As a library
+
+```bash
+npm install cmd-git-copilot-tools
+```
+
 ## Features
 
 - **Browse**: Explore agents, instructions, plugins, prompts, skills, and workflows in an interactive terminal list
@@ -23,6 +33,7 @@ npx cmd-git-copilot-tools
 - **Download**: Save files to appropriate `.github/` folders in your current directory
 - **Caching**: Smart caching for better performance
 - **Multiple Sources**: Configure and switch between multiple GitHub repositories
+- **Programmatic API**: Use as a library in Node.js/TypeScript projects with full type safety
 
 ## Quick Start
 
@@ -49,6 +60,87 @@ cmd-copilot-tools --prompt my-prompt --instruction existing-one,missing-one
 # Search across all tools
 cmd-copilot-tools --search copilot
 ```
+
+## Programmatic Usage
+
+In addition to the CLI, you can use `cmd-git-copilot-tools` as a library in your Node.js or TypeScript projects:
+
+```bash
+npm install cmd-git-copilot-tools
+```
+
+### Example: Fetch and Search Tools
+
+```javascript
+import {
+  loadConfig,
+  fetchAllToolsFromSources,
+  searchTools,
+  filterByCategory,
+  downloadItem,
+} from 'cmd-git-copilot-tools';
+
+// Load configuration
+const config = loadConfig();
+
+// Fetch all tools from configured sources
+const allTools = await fetchAllToolsFromSources(
+  config.sources,
+  config.enterpriseToken
+);
+
+// Search for specific tools
+const results = searchTools(allTools, 'agent');
+console.log(`Found ${results.length} tools matching "agent"`);
+
+// Filter by category
+const agents = filterByCategory(allTools, 'agents');
+console.log(`Total agents: ${agents.length}`);
+
+// Download a specific item
+if (agents.length > 0) {
+  await downloadItem(agents[0], process.cwd());
+  console.log(`Downloaded: ${agents[0].name}`);
+}
+```
+
+### Example: Parse GitHub URLs
+
+```javascript
+import {
+  parseGitHubUrl,
+  addSource,
+  loadConfig,
+  saveConfig,
+} from 'cmd-git-copilot-tools';
+
+// Parse a GitHub repository URL
+const parsed = parseGitHubUrl('https://github.com/owner/repo');
+console.log(parsed); // { owner: 'owner', repo: 'repo' }
+
+// Add a new source programmatically
+const config = loadConfig();
+addSource(config, 'https://github.com/myorg/my-tools', 'My Tools');
+saveConfig(config);
+```
+
+### TypeScript Support
+
+The package includes TypeScript definitions for full type safety:
+
+```typescript
+import type {
+  Config,
+  RepositorySource,
+  CopilotItem,
+  ToolCategory,
+} from 'cmd-git-copilot-tools';
+
+const config: Config = loadConfig();
+const category: ToolCategory = 'prompts';
+```
+
+For a complete API reference and examples, see [docs/api.md](docs/api.md).
 
 ## Interactive Terminal UI
 
@@ -142,7 +234,7 @@ cmd-copilot-tools [options]
 | `--remove-source <url\|label>` | Remove a configured source |
 | `--list-source` | List all configured sources |
 | `--test` | Run all tests (unit + integration) |
-| `--test:<name>` | Run a specific suite: `search`, `config`, `download`, `full` |
+| `--test:<name>` | Run a specific suite: `search`, `config`, `download`, `cli`, `permissions`, `programmatic`, `full` |
 | `--test:log` | Run all tests and save log to `logs/` |
 | `--test:<name>:log` | Run specific suite and save log |
 | `--log` | Save test log to `logs/` (requires `--test`) |
@@ -166,7 +258,7 @@ Behaviour when combining flags:
 - **Category with names** — each name is downloaded; files not found are reported as a notice at the end (the rest still download).
 - **Category without names** — the category is skipped and a notice is printed at the end. Use the flag alone (e.g. `--instruction`) to open the interactive browser for that category.
 
-```
+```text
 Notices:
   --prompt: no names provided, skipped (use --prompt alone to browse interactively)
   Tool 'bad-name' not found. Use --search to find available tools.
