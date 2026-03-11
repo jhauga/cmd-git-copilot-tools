@@ -306,8 +306,12 @@ Then edit your config:
 | Command | Description |
 | --- | --- |
 | `--source <url> [label]` | Add a source repository |
+| `--source:<map>=<val> <url> [label]` | Add a source with a folder mapping override |
+| `--source:[m=v,...] <url> [label]` | Add a source with multiple folder mapping overrides |
 | `--use <url\|label\|#>[/path]` | Use a source for this run only. Can reference by URL, label, or number from `--list-source` (e.g., `2` or `2/branch/tools`) |
 | `--url <url>` | Use the url passed as a temp source for download |
+| `--url:<map>=<val> <url>` | Use a temp source with a folder mapping override |
+| `--url:[m=v,...] <url>` | Use a temp source with multiple folder mapping overrides |
 | `--set-default <url\|label>` | Set the default source permanently |
 | `--remove-source <url\|label>` | Remove a source |
 | `--list-source` | List all configured sources (displays numbered list) |
@@ -333,4 +337,58 @@ cmd-copilot-tools --use 2/develop/custom-path --agent my-agent
 
 # Use source by label with appended path
 cmd-copilot-tools --use jhauga/develop/custom-path --agent my-agent
+
+# Use --use or --url with the interactive browser
+# The active source is shown at the top of the terminal UI
+cmd-copilot-tools --use jhauga
+# Shows: *** Using https://github.com/jhauga/awesome-copilot (jhauga) ***
+
+cmd-copilot-tools --url https://github.com/owner/repo
+# Shows: *** URL https://github.com/owner/repo ***
 ```
+
+> **Note:** When `--use` references a source that is not configured, a `SourceNotFoundError` is thrown. Use `--list-source` to see available sources.
+
+### Configuring Folder Mappings via CLI Arguments
+
+Instead of manually editing the config file, you can set folder mappings directly from the command line using the config-argument syntax:
+
+```bash
+# Map a single category (--url for temp one-time use)
+# Result: folderMappings = {skills: "root", agents: null, instructions: null, plugins: null, prompts: null, workflows: null}
+cmd-copilot-tools --url:skills=root https://github.com/owner/repo --skill my-skill
+
+# Map a single category to a custom path (others remain at default locations)
+# Result: folderMappings = {plugins: "custom/path"}
+cmd-copilot-tools --url:plugins="custom/path" https://github.com/owner/repo --plugin my-plugin
+
+# Map multiple categories at once with bracket syntax
+# Result: folderMappings = {plugins: "custom/path", instructions: "other/path"}
+cmd-copilot-tools --url:[plugins="custom/path",instructions="other/path"] https://github.com/owner/repo
+
+# Save a source with folder mappings (--source persists to config)
+cmd-copilot-tools --source:skills=root https://github.com/owner/repo
+cmd-copilot-tools --source:instructions="custom/path" https://github.com/owner/repo tool
+cmd-copilot-tools --source:[plugins="custom/path",instructions="other/path"] https://github.com/owner/repo myrepo
+```
+
+#### Config-argument syntax
+
+| Syntax | Description |
+| --- | --- |
+| `--url:<category>=<value>` | Set a single folder mapping for a temp source |
+| `--url:[<cat1>=<val1>,<cat2>=<val2>]` | Set multiple folder mappings for a temp source |
+| `--source:<category>=<value>` | Set a single folder mapping when adding a source |
+| `--source:[<cat1>=<val1>,<cat2>=<val2>]` | Set multiple folder mappings when adding a source |
+
+#### Valid categories
+
+`agents`, `instructions`, `plugins`, `prompts`, `skills`, `workflows`
+
+#### Valid values
+
+| Value | Behavior |
+| --- | --- |
+| `"root"` | Entire repository root treated as this category; all other categories set to `null` |
+| `"null"` | Exclude this category |
+| `"path/to/folder"` | Custom folder path; unspecified categories keep their defaults |

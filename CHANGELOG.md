@@ -69,8 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Dependencies
 
-- `axios` ^1.11.0 for HTTP requests
-- Minimal dependency footprint
+- Zero runtime dependencies — uses Node.js native `fetch` API
 
 #### Build System
 

@@ -1,4 +1,4 @@
-import type { CopilotItem, ToolCategory } from '../types.js';
+import type { CopilotItem, RepositorySource, ToolCategory } from '../types.js';
 import { CATEGORY_LABELS } from '../types.js';
 
 /**
@@ -57,6 +57,20 @@ function itemMatches(item: CopilotItem, search: string): boolean {
 
 export function filterByCategory(items: CopilotItem[], category: ToolCategory): CopilotItem[] {
   return items.filter(item => item.category === category);
+}
+
+export function groupBySource(items: CopilotItem[]): Map<string, { repo: RepositorySource; items: CopilotItem[] }> {
+  const map = new Map<string, { repo: RepositorySource; items: CopilotItem[] }>();
+  for (const item of items) {
+    const key = `${item.repo.owner}/${item.repo.repo}/${item.repo.branch || ''}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      map.set(key, { repo: item.repo, items: [item] });
+    }
+  }
+  return map;
 }
 
 export function groupByCategory(items: CopilotItem[]): Map<ToolCategory, CopilotItem[]> {

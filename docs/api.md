@@ -181,6 +181,7 @@ import {
   searchTools,       // Search items by query string (supports category prefixes)
   filterByCategory,  // Filter to a single category
   groupByCategory,   // Group items into a Map<ToolCategory, CopilotItem[]>
+  groupBySource,     // Group items by repository source
   findByCode,        // Resolve a download code ('a1', 'pl2', '3') to an item
 } from 'cmd-git-copilot-tools/src/engine/search.js';
 

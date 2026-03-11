@@ -57,7 +57,7 @@ cmd-copilot-tools --skill quasi-coder --instruction html-css-style-color-guide,u
 # If a name is not found it is reported at the end instead of aborting
 cmd-copilot-tools --prompt my-prompt --instruction existing-one,missing-one
 
-# Search across all tools
+# Search across all tools (results grouped by source)
 cmd-copilot-tools --search copilot
 ```
 
@@ -164,6 +164,35 @@ q = Quit;  / = Start Search
 >
 ```
 
+When launched with `--use` or `--url`, the active source is displayed at the top:
+
+```text
+*** Using https://github.com/owner/repo (myrepo) ***
+[all] SHOW ALL
+[a] Agents:
+[i] Instructions:
+[pl] Plugins:
+[p] Prompts:
+[s] Skills:
+[w] Workflows:
+------------------------------------------------------------
+*** INSTRUCTIONS ***
+Navigate with arrow keys or PgUp/PgDown.
+
+q = Quit;  / = Start Search
+[a], [i], [p], [pl], [s], [w] or [all] = Expand category
+------------------------------------------------------------
+>
+```
+
+With `--url` (temporary source):
+
+```text
+*** URL https://github.com/owner/repo ***
+[all] SHOW ALL
+...
+```
+
 Type a category label (e.g., `all` or `a`) and press Enter to expand:
 
 ```text
@@ -228,8 +257,12 @@ cmd-copilot-tools [options]
 | `--workflow [name,...]` | Show workflows, or download named workflow(s). Extension (`.workflow.md`) is optional |
 | `--search <term>[,term]` | Search tools (non-interactive output) |
 | `--source <url> [label]` | Add a GitHub repository as a source |
+| `--source:<map>=<val> <url> [label]` | Add a source with a folder mapping override |
+| `--source:[m=v,...] <url> [label]` | Add a source with multiple folder mapping overrides |
 | `--use <url\|label\|#>[/path]` | Use a specific source for this run. Can be a URL, label, or number from `--list-source` (e.g., `2` or `2/branch/tools`) |
 | `--url <url>` | Use the url passed as a temp source for download |
+| `--url:<map>=<val> <url>` | Use a temp source with a folder mapping override |
+| `--url:[m=v,...] <url>` | Use a temp source with multiple folder mapping overrides |
 | `--set-default <url\|label>` | Set the default source permanently |
 | `--remove-source <url\|label>` | Remove a configured source |
 | `--list-source` | List all configured sources |
@@ -303,6 +336,20 @@ cmd-copilot-tools --use 2/develop/tools --prompt
 
 # Use a URL as a temporary source (without saving to config)
 cmd-copilot-tools --url https://github.com/owner/repo --agent my-agent
+cmd-copilot-tools --url https://github.com/owner/repo
+
+# Use --use or --url with the interactive browser (source shown in header)
+cmd-copilot-tools --use myrepo
+cmd-copilot-tools --url https://github.com/owner/repo
+
+# Use a temp URL with folder mapping overrides
+cmd-copilot-tools --url:skills=root https://github.com/owner/repo --skill my-skill
+cmd-copilot-tools --url:plugins="custom/path" https://github.com/owner/repo --plugin my-plugin
+cmd-copilot-tools --url:[plugins="path",instructions="path"] https://github.com/owner/repo
+
+# Add a source with folder mappings
+cmd-copilot-tools --source:skills=root https://github.com/owner/repo
+cmd-copilot-tools --source:instructions="custom/path" https://github.com/owner/repo tool
 
 # Set a source as the permanent default
 cmd-copilot-tools --set-default myrepo
@@ -419,7 +466,7 @@ For full configuration details, see [docs/configuration.md](docs/configuration.m
 This command-line tool was built with:
 
 - TypeScript
-- Axios for HTTP requests
+- Node.js native `fetch` API for HTTP requests
 - ESBuild for bundling
 - Node.js readline for interactive terminal UI
 

@@ -17,11 +17,18 @@ import {
   renderLoadingIndicator,
   renderDownloadSuccess,
   renderError,
+  renderSourceBanner,
   terminalHeight,
 } from './renderer.js';
 import { readRawKey, readConfirm, restoreTerminal, setupReadline } from './input.js';
 
 type UIMode = 'category' | 'expanded' | 'search';
+
+export interface SourceDisplayInfo {
+  type: 'source' | 'url';
+  url: string;
+  label?: string;
+}
 
 interface UIState {
   mode: UIMode;
@@ -33,6 +40,7 @@ interface UIState {
   statusMessage: string;
   inputBuffer: string;
   sources: RepositorySource[];
+  sourceDisplay?: SourceDisplayInfo;
 }
 
 function write(text: string): void {
@@ -56,6 +64,10 @@ function getListAreaHeight(): number {
 
 function render(state: UIState): void {
   const listHeight = getListAreaHeight();
+
+  if (state.sourceDisplay) {
+    writeln(renderSourceBanner(state.sourceDisplay.type, state.sourceDisplay.url, state.sourceDisplay.label));
+  }
 
   if (state.mode === 'category') {
     // Compact category list
@@ -127,9 +139,12 @@ async function handleDownload(state: UIState, code: string, config: Config): Pro
 
 export async function runInteractiveUI(
   config: Config,
-  initialCategory: ToolCategory | 'all' | null = null
+  initialCategory: ToolCategory | 'all' | null = null,
+  sourceOverride?: { sources: RepositorySource[]; display?: SourceDisplayInfo }
 ): Promise<void> {
   setupReadline();
+
+  const activeSources = sourceOverride?.sources ?? config.sources;
 
   const state: UIState = {
     mode: 'category',
@@ -140,7 +155,8 @@ export async function runInteractiveUI(
     scrollOffset: 0,
     statusMessage: '',
     inputBuffer: '',
-    sources: config.sources,
+    sources: activeSources,
+    sourceDisplay: sourceOverride?.display,
   };
 
   // Show loading and fetch tools
@@ -148,7 +164,7 @@ export async function runInteractiveUI(
   write(ANSI.hideCursor);
 
   const token = getToken(undefined, config.enterpriseToken);
-  const activeSource = config.sources[config.defaultSourceIndex] ?? config.sources[0];
+  const activeSource = activeSources[config.defaultSourceIndex] ?? activeSources[0];
   const repoLabel = activeSource
     ? `${activeSource.owner}/${activeSource.repo}`
     : 'configured sources';
@@ -156,7 +172,7 @@ export async function runInteractiveUI(
   writeln(renderLoadingIndicator(repoLabel));
 
   try {
-    state.items = await fetchAllToolsFromSources(config.sources, token, config.cacheTimeout);
+    state.items = await fetchAllToolsFromSources(activeSources, token, config.cacheTimeout);
     state.filteredItems = state.items;
   } catch (err) {
     write(ANSI.showCursor);

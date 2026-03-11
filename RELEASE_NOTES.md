@@ -90,7 +90,7 @@ if (agents.length > 0) {
 - **Dual export**: CLI executable (`dist/cli.js`) + Library (`dist/index.js`)
 - **TypeScript declarations**: Full `.d.ts` files with source maps
 - **CommonJS format**: Compatible with Node.js 18+
-- **Minimal dependencies**: Only axios for HTTP requests
+- **Zero runtime dependencies**: Uses Node.js native `fetch` API
 
 #### API Modules
 - `config` - Configuration management

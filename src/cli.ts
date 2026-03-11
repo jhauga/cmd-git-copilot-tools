@@ -3,13 +3,15 @@ import * as fs from 'fs';
 import { loadConfig, saveConfig, addSource, removeSource, setDefaultSource, findSource, listSources, parseGitHubUrl, getConfigPath } from './engine/config.js';
 import { fetchAllToolsFromSources, fetchCategory, getToken, fetchDirectoryTree } from './engine/github.js';
 import { downloadItem, downloadItemsByName } from './engine/download.js';
-import { searchTools, filterByCategory } from './engine/search.js';
+import { searchTools, filterByCategory, groupBySource } from './engine/search.js';
 import { runInteractiveUI, printToolsList } from './ui/terminal.js';
+import type { SourceDisplayInfo } from './ui/terminal.js';
+import { renderSearchSourceHeader } from './ui/renderer.js';
 import { readConfirm, readLine, readAuthPermission } from './ui/input.js';
 import { loadPermissions, savePermissions } from './engine/permissions.js';
 import type { PermissionState } from './engine/permissions.js';
-import type { ToolCategory, RepositorySource, Config } from './types.js';
-import { CATEGORY_LABELS, ORDERED_CATEGORIES, CATEGORY_DISPLAY } from './types.js';
+import type { ToolCategory, RepositorySource, Config, FolderMappings } from './types.js';
+import { CATEGORY_LABELS, ORDERED_CATEGORIES, CATEGORY_DISPLAY, SourceNotFoundError } from './types.js';
 import { printSuiteResult, printSummary, logResults } from './test/runner.js';
 import type { SuiteResult } from './test/runner.js';
 import { runSearchSuite } from './test/unit/search.js';
@@ -55,10 +57,16 @@ OPTIONS:
   --search <term>[,term...]     Search across all tool categories (non-interactive)
 
   --source <url> [label]        Add a GitHub repository as a source
+  --source:<map>=<val> <url> [label]
+                                Add a source with a folder mapping override
+  --source:[m=v,...] <url> [label]
+                                Add a source with multiple folder mapping overrides
   --use <url|label|#>[/path]    Use a specific source for this invocation.
                                 Can be a URL, label, or number from --list-source.
                                 Optionally append a path (e.g., 2/branch/tools)
   --url <url>                   Use the url passed as a temp source for download
+  --url:<map>=<val> <url>       Use a temp source with a folder mapping override
+  --url:[m=v,...] <url>         Use a temp source with multiple folder mapping overrides
   --set-default <url|label>     Set the default source permanently
   --remove-source <url|label>   Remove a configured source
   --list-source                 List all configured source repositories
@@ -94,6 +102,11 @@ EXAMPLES:
   cmd-copilot-tools --use myrepo/branch/tools --agent my-agent
   cmd-copilot-tools --use 2/branch/tools --agent my-agent
   cmd-copilot-tools --url https://github.com/owner/repo --agent my-agent
+  cmd-copilot-tools --url:skills=root https://github.com/owner/repo --skill my-skill
+  cmd-copilot-tools --url:plugins="custom/path" https://github.com/owner/repo --plugin my-plugin
+  cmd-copilot-tools --url:[plugins="path",instructions="path"] https://github.com/owner/repo
+  cmd-copilot-tools --source:skills=root https://github.com/owner/repo
+  cmd-copilot-tools --source:instructions="custom/path" https://github.com/owner/repo tool
   cmd-copilot-tools --list-source
   cmd-copilot-tools --test
   cmd-copilot-tools --test:search
@@ -142,16 +155,142 @@ function buildSearchQuery(terms: string[]): string {
   return terms.join(',');
 }
 
+/** Valid category names for config-argument folder mappings. */
+const VALID_MAPPING_CATEGORIES = new Set<string>([
+  'agents', 'instructions', 'plugins', 'prompts', 'skills', 'workflows',
+]);
+
+/**
+ * Split comma-separated mapping entries, respecting quoted values.
+ * Example: 'plugins="custom/path",instructions="other"' → ['plugins="custom/path"', 'instructions="other"']
+ */
+function splitMappingEntries(input: string): string[] {
+  const entries: string[] = [];
+  let current = '';
+  let inQuote = false;
+  let quoteChar = '';
+
+  for (const ch of input) {
+    if (!inQuote && (ch === '"' || ch === "'")) {
+      inQuote = true;
+      quoteChar = ch;
+      current += ch;
+    } else if (inQuote && ch === quoteChar) {
+      inQuote = false;
+      current += ch;
+    } else if (!inQuote && ch === ',') {
+      if (current.trim()) {entries.push(current.trim());}
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) {entries.push(current.trim());}
+  return entries;
+}
+
+/**
+ * Parse a single mapping entry like "skills=root" or "plugins=\"custom/path\"" or "agents=null".
+ */
+function parseMappingEntry(entry: string): { category: ToolCategory; value: string | null } | null {
+  const eqIndex = entry.indexOf('=');
+  if (eqIndex === -1) {return null;}
+
+  const category = entry.substring(0, eqIndex).trim();
+  let value = entry.substring(eqIndex + 1).trim();
+
+  if (!VALID_MAPPING_CATEGORIES.has(category)) {return null;}
+
+  // Strip surrounding quotes
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1);
+  }
+
+  if (value === 'null') {return { category: category as ToolCategory, value: null };}
+  if (value === 'root') {return { category: category as ToolCategory, value: 'root' };}
+  if (value === '') {return null;}
+
+  return { category: category as ToolCategory, value };
+}
+
+/**
+ * Build a FolderMappings object from parsed mapping entries.
+ * When any value is "root", all other categories are set to null.
+ * When values are custom paths, only the specified categories are set.
+ */
+function buildFolderMappingsFromEntries(entries: Array<{ category: ToolCategory; value: string | null }>): FolderMappings {
+  const hasRoot = entries.some(e => e.value === 'root');
+
+  if (hasRoot) {
+    const mappings: FolderMappings = {
+      agents: null,
+      instructions: null,
+      plugins: null,
+      prompts: null,
+      skills: null,
+      workflows: null,
+    };
+    for (const { category, value } of entries) {
+      mappings[category] = value;
+    }
+    return mappings;
+  }
+
+  const mappings: FolderMappings = {};
+  for (const { category, value } of entries) {
+    mappings[category] = value;
+  }
+  return mappings;
+}
+
+/**
+ * Parse a config-argument from --url or --source options.
+ *
+ * Single mapping:   --url:skills=root          --source:plugins="custom/path"
+ * Multiple mappings: --url:[skills=root,plugins="path"]  --source:[a=null,p="path"]
+ *
+ * Returns the flag name ('url' or 'source') and parsed FolderMappings, or null if invalid.
+ */
+export function parseConfigArgument(arg: string): { flag: string; mappings: FolderMappings } | null {
+  const match = /^--(url|source):(.+)$/.exec(arg);
+  if (!match) {return null;}
+
+  const flag = match[1]!;
+  const configPart = match[2]!;
+
+  let entries: Array<{ category: ToolCategory; value: string | null }>;
+
+  if (configPart.startsWith('[') && configPart.endsWith(']')) {
+    const inner = configPart.slice(1, -1);
+    const parts = splitMappingEntries(inner);
+    entries = [];
+    for (const part of parts) {
+      const parsed = parseMappingEntry(part);
+      if (!parsed) {return null;}
+      entries.push(parsed);
+    }
+    if (entries.length === 0) {return null;}
+  } else {
+    const parsed = parseMappingEntry(configPart);
+    if (!parsed) {return null;}
+    entries = [parsed];
+  }
+
+  return { flag, mappings: buildFolderMappingsFromEntries(entries) };
+}
+
 interface ParsedArgs {
   flags: Set<string>;
   values: Map<string, string[]>;
   extra: string[];
+  configArgs: Map<string, FolderMappings>;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
   const flags = new Set<string>();
   const values = new Map<string, string[]>();
   const extra: string[] = [];
+  const configArgs = new Map<string, FolderMappings>();
   let i = 0;
 
   while (i < argv.length) {
@@ -198,6 +337,24 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === '--log') {
       flags.add('log');
       i++;
+    } else if (arg.startsWith('--url:') || arg.startsWith('--source:')) {
+      // Config-argument: --url:category=value or --source:[cat=val,cat=val]
+      const parsed = parseConfigArgument(arg);
+      if (!parsed) {
+        console.error(`Invalid config argument: ${arg}`);
+        console.error('Expected: --url:<category>=<value> or --source:[<cat>=<val>,...]');
+        console.error('Valid categories: agents, instructions, plugins, prompts, skills, workflows');
+        console.error('Valid values: a folder path, "root", or "null"');
+        process.exit(1);
+      }
+      configArgs.set(parsed.flag, parsed.mappings);
+      const vals: string[] = [];
+      i++;
+      while (i < argv.length && !argv[i]!.startsWith('--') && argv[i] !== '/?') {
+        vals.push(argv[i]!);
+        i++;
+      }
+      values.set(parsed.flag, vals);
     } else if (arg.startsWith('--')) {
       // Unknown flag
       console.error(`Unknown option: ${arg}. Use --help for usage.`);
@@ -208,11 +365,17 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  return { flags, values, extra };
+  return { flags, values, extra, configArgs };
 }
 
 function splitToolNames(names: string[]): string[] {
   return names.flatMap(n => n.split(',').map(s => s.trim()).filter(Boolean));
+}
+
+function buildSourceUrl(src: RepositorySource): string {
+  return src.baseUrl
+    ? `${src.baseUrl}/${src.owner}/${src.repo}`
+    : `https://github.com/${src.owner}/${src.repo}`;
 }
 
 /**
@@ -365,7 +528,7 @@ export function resolveUseSource(config: Config, useSource: string): RepositoryS
   return undefined;
 }
 
-async function handleSourceAdd(config: ReturnType<typeof loadConfig>, vals: string[], token?: string): Promise<void> {
+async function handleSourceAdd(config: ReturnType<typeof loadConfig>, vals: string[], token?: string, folderMappings?: FolderMappings): Promise<void> {
   if (vals.length === 0) {
     console.error('--source requires a URL. Example: --source https://github.com/owner/repo');
     process.exit(1);
@@ -376,6 +539,9 @@ async function handleSourceAdd(config: ReturnType<typeof loadConfig>, vals: stri
 
   try {
     const newSource = addSource(config, url!, label);
+    if (folderMappings) {
+      newSource.folderMappings = folderMappings;
+    }
 
     console.log(`\nAdding source: ${url}${label ? ` (${label})` : ''}`);
     console.log('Checking repository for standard folders...');
@@ -433,15 +599,23 @@ async function handleCategoryFlag(
 
   // Resolve sources to use
   let sources = config.sources;
+  let sourceOverride: { sources: RepositorySource[]; display?: SourceDisplayInfo } | undefined;
   if (tempSource) {
     sources = [tempSource];
+    sourceOverride = {
+      sources: [tempSource],
+      display: { type: 'url', url: buildSourceUrl(tempSource) },
+    };
   } else if (useSource) {
     const src = resolveUseSource(config, useSource);
     if (!src) {
-      console.error(`Source '${useSource}' not found. Use --list-source to see configured sources.`);
-      process.exit(1);
+      throw new SourceNotFoundError(useSource);
     }
     sources = [src];
+    sourceOverride = {
+      sources: [src],
+      display: { type: 'source', url: buildSourceUrl(src), label: src.label },
+    };
   }
 
   const toolNames = splitToolNames(vals);
@@ -449,7 +623,7 @@ async function handleCategoryFlag(
   if (toolNames.length === 0) {
     // Show interactive list filtered to this category
     if (process.stdout.isTTY) {
-      await runInteractiveUI(config, category);
+      await runInteractiveUI(config, category, sourceOverride);
     } else {
       // Non-interactive: fetch and print
       const items = await fetchAllToolsFromSources(sources, token, config.cacheTimeout);
@@ -668,7 +842,7 @@ async function handlePermissionFlag(value: string, perms: PermissionState): Prom
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const { flags, values, extra } = parseArgs(argv);
+  const { flags, values, extra, configArgs } = parseArgs(argv);
 
   if (flags.has('help')) {
     showHelp();
@@ -730,6 +904,10 @@ async function main(): Promise<void> {
       branch: parsed.branch,
       baseUrl: parsed.baseUrl,
     };
+    const urlMappings = configArgs.get('url');
+    if (urlMappings) {
+      tempSource.folderMappings = urlMappings;
+    }
   }
 
   // --url and --use are mutually exclusive
@@ -744,7 +922,7 @@ async function main(): Promise<void> {
   }
 
   if (values.has('source')) {
-    await handleSourceAdd(config, values.get('source')!, resolveToken(config.enterpriseToken));
+    await handleSourceAdd(config, values.get('source')!, resolveToken(config.enterpriseToken), configArgs.get('source'));
     return;
   }
 
@@ -810,8 +988,7 @@ async function main(): Promise<void> {
     } else if (useSource) {
       const src = resolveUseSource(config, useSource);
       if (!src) {
-        console.error(`Source '${useSource}' not found. Use --list-source to see configured sources.`);
-        process.exit(1);
+        throw new SourceNotFoundError(useSource);
       }
       sources = [src];
     }
@@ -824,7 +1001,19 @@ async function main(): Promise<void> {
       process.exit(0);
     }
 
-    printToolsList(results, 'all');
+    const defaultSource = config.sources[config.defaultSourceIndex];
+    const sourceGroups = groupBySource(results);
+
+    for (const [, group] of sourceGroups) {
+      const isDefault = !!defaultSource &&
+        group.repo.owner === defaultSource.owner &&
+        group.repo.repo === defaultSource.repo &&
+        (group.repo.branch || '') === (defaultSource.branch || '');
+
+      // Strip ANSI for pipe-friendly output
+      console.log(renderSearchSourceHeader(group.repo, isDefault).replace(/\x1b\[[0-9;]*m/g, ''));
+      printToolsList(group.items, 'all');
+    }
     return;
   }
 
@@ -860,8 +1049,7 @@ async function main(): Promise<void> {
     } else if (useSource) {
       const src = resolveUseSource(config, useSource);
       if (!src) {
-        console.error(`Source '${useSource}' not found. Use --list-source to see configured sources.`);
-        process.exit(1);
+        throw new SourceNotFoundError(useSource);
       }
       sources = [src];
     }
@@ -898,13 +1086,32 @@ async function main(): Promise<void> {
   }
 
   // Default: interactive terminal UI
+  // Resolve source override for --url or --use
+  let sourceOverride: { sources: RepositorySource[]; display?: SourceDisplayInfo } | undefined;
+  if (tempSource) {
+    sourceOverride = {
+      sources: [tempSource],
+      display: { type: 'url', url: buildSourceUrl(tempSource) },
+    };
+  } else if (useSource) {
+    const src = resolveUseSource(config, useSource);
+    if (!src) {
+      throw new SourceNotFoundError(useSource);
+    }
+    sourceOverride = {
+      sources: [src],
+      display: { type: 'source', url: buildSourceUrl(src), label: src.label },
+    };
+  }
+
   if (process.stdout.isTTY) {
     const initialCategory: ToolCategory | 'all' | null = flags.has('all') ? 'all' : null;
-    await runInteractiveUI(config, initialCategory);
+    await runInteractiveUI(config, initialCategory, sourceOverride);
   } else {
     // Non-interactive (piped): print all tools
     const token = resolveToken(config.enterpriseToken);
-    const items = await fetchAllToolsFromSources(config.sources, token, config.cacheTimeout);
+    const sources = sourceOverride?.sources ?? config.sources;
+    const items = await fetchAllToolsFromSources(sources, token, config.cacheTimeout);
     printToolsList(items, 'all');
   }
 }

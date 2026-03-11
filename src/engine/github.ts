@@ -1,4 +1,3 @@
-import axios, { AxiosError } from 'axios';
 import { spawnSync } from 'child_process';
 import type { CopilotItem, GitHubFileEntry, RepositorySource, ToolCategory } from '../types.js';
 import { ORDERED_CATEGORIES } from '../types.js';
@@ -52,18 +51,15 @@ function buildHeaders(token?: string): Record<string, string> {
   return headers;
 }
 
-function getAxiosConfig(repo: RepositorySource, token?: string) {
-  const config: Record<string, unknown> = {
-    headers: buildHeaders(token),
-    timeout: 15000,
-  };
-  if (repo.baseUrl) {
-    const env = process.env['NODE_TLS_REJECT_UNAUTHORIZED'];
-    if (env === '0') {
-      config['httpsAgent'] = new (require('https').Agent)({ rejectUnauthorized: false });
-    }
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timer);
   }
-  return config;
 }
 
 export async function getDirectoryContents(
@@ -78,16 +74,18 @@ export async function getDirectoryContents(
 
   const url = buildApiUrl(repo, repoPath);
   try {
-    const response = await axios.get<GitHubFileEntry[] | GitHubFileEntry>(
-      url,
-      getAxiosConfig(repo, token)
-    );
-
-    const data = Array.isArray(response.data) ? response.data : [response.data];
+    const response = await fetchWithTimeout(url, { headers: buildHeaders(token) });
+    if (!response.ok) {
+      handleGitHubError(response, repo, repoPath);
+    }
+    const json = await response.json() as GitHubFileEntry[] | GitHubFileEntry;
+    const data = Array.isArray(json) ? json : [json];
     cache.set(cacheKey, data, ttl);
     return data;
   } catch (error) {
-    handleGitHubError(error, repo, repoPath);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Request timed out for ${repo.owner}/${repo.repo} path '${repoPath}'.`);
+    }
     throw error;
   }
 }
@@ -95,37 +93,33 @@ export async function getDirectoryContents(
 export async function getFileContent(downloadUrl: string, token?: string): Promise<string> {
   const headers = buildHeaders(token);
   headers['Accept'] = 'application/vnd.github.raw+json';
-  const response = await axios.get<string>(downloadUrl, {
-    headers,
-    responseType: 'text',
-    timeout: 15000,
-  });
-  return response.data;
+  const response = await fetchWithTimeout(downloadUrl, { headers });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch file content (${response.status}): ${response.statusText}`);
+  }
+  return response.text();
 }
 
-function handleGitHubError(error: unknown, repo: RepositorySource, repoPath: string): never {
-  if (error instanceof AxiosError) {
-    const status = error.response?.status;
-    const repoRef = `${repo.owner}/${repo.repo}`;
-    if (status === 401) {
-      throw new Error(
-        `Authentication failed for ${repoRef}. Set GITHUB_TOKEN environment variable or configure an enterprise token.`
-      );
-    }
-    if (status === 403) {
-      const rateLimitReset = error.response?.headers['x-ratelimit-reset'];
-      if (rateLimitReset) {
-        const resetTime = new Date(parseInt(rateLimitReset) * 1000).toLocaleTimeString();
-        throw new Error(`GitHub API rate limit exceeded for ${repoRef}. Resets at ${resetTime}. Set GITHUB_TOKEN for higher limits.`);
-      }
-      throw new Error(`Access forbidden to ${repoRef}. Check your token permissions.`);
-    }
-    if (status === 404) {
-      throw new Error(`Path '${repoPath}' not found in ${repoRef}. The folder may not exist.`);
-    }
-    throw new Error(`GitHub API error (${status}): ${error.message}`);
+function handleGitHubError(response: Response, repo: RepositorySource, repoPath: string): never {
+  const status = response.status;
+  const repoRef = `${repo.owner}/${repo.repo}`;
+  if (status === 401) {
+    throw new Error(
+      `Authentication failed for ${repoRef}. Set GITHUB_TOKEN environment variable or configure an enterprise token.`
+    );
   }
-  throw error;
+  if (status === 403) {
+    const rateLimitReset = response.headers.get('x-ratelimit-reset');
+    if (rateLimitReset) {
+      const resetTime = new Date(parseInt(rateLimitReset) * 1000).toLocaleTimeString();
+      throw new Error(`GitHub API rate limit exceeded for ${repoRef}. Resets at ${resetTime}. Set GITHUB_TOKEN for higher limits.`);
+    }
+    throw new Error(`Access forbidden to ${repoRef}. Check your token permissions.`);
+  }
+  if (status === 404) {
+    throw new Error(`Path '${repoPath}' not found in ${repoRef}. The folder may not exist.`);
+  }
+  throw new Error(`GitHub API error (${status}): ${response.statusText}`);
 }
 
 function getCategoryPath(repo: RepositorySource, category: ToolCategory): string | null {

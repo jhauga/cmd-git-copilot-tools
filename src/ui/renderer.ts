@@ -1,4 +1,4 @@
-import type { CopilotItem, ToolCategory } from '../types.js';
+import type { CopilotItem, RepositorySource, ToolCategory } from '../types.js';
 import { CATEGORY_DISPLAY, ORDERED_CATEGORIES } from '../types.js';
 import { filterByCategory } from '../engine/search.js';
 
@@ -165,4 +165,25 @@ export function renderDownloadSuccess(name: string, localPath: string): string {
 
 export function renderError(message: string): string {
   return `  Error: ${message}`;
+}
+
+export function renderSourceBanner(type: 'source' | 'url', url: string, label?: string): string {
+  if (type === 'source') {
+    const labelStr = label ? ` (${label})` : '';
+    return bold(`*** Using ${url}${labelStr} ***`);
+  }
+  return bold(`*** URL ${url} ***`);
+}
+
+export function renderSearchSourceHeader(repo: RepositorySource, isDefault: boolean): string {
+  if (isDefault) {
+    return bold('*** Default Source ***');
+  }
+  const base = repo.baseUrl || 'https://github.com';
+  let url = `${base}/${repo.owner}/${repo.repo}`;
+  if (repo.branch) {
+    url += `/tree/${repo.branch}`;
+  }
+  const labelStr = repo.label ? ` [${repo.label}]` : '';
+  return bold(`*** ${url}${labelStr} ***`);
 }

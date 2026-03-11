@@ -1,7 +1,8 @@
-import { parseUseSource, resolveUseSource } from '../../cli.js';
+import { parseUseSource, resolveUseSource, parseConfigArgument } from '../../cli.js';
 import { getDefaultConfig } from '../../engine/config.js';
 import type { Config } from '../../types.js';
-import { runSuite, assert, assertEqual } from '../runner.js';
+import { SourceNotFoundError } from '../../types.js';
+import { runSuite, assert, assertEqual, assertDeepEqual } from '../runner.js';
 import type { SuiteResult } from '../runner.js';
 
 function makeConfig(): Config {
@@ -201,6 +202,152 @@ export async function runCliSuite(): Promise<SuiteResult> {
       assertEqual(result!.owner, 'test');
       assertEqual(result!.repo, 'myrepo');
       assertEqual(result!.branch, 'develop', 'branch should not include "tree/"');
+    },
+
+    // --- parseConfigArgument tests ---
+
+    'parseConfigArgument: single mapping with root value': () => {
+      const result = parseConfigArgument('--url:skills=root');
+      assert(result !== null, 'should parse single root mapping');
+      assertEqual(result!.flag, 'url');
+      assertEqual(result!.mappings.skills, 'root');
+      assertEqual(result!.mappings.agents, null);
+      assertEqual(result!.mappings.instructions, null);
+      assertEqual(result!.mappings.plugins, null);
+      assertEqual(result!.mappings.prompts, null);
+      assertEqual(result!.mappings.workflows, null);
+    },
+
+    'parseConfigArgument: single mapping with custom path': () => {
+      const result = parseConfigArgument('--url:plugins="custom/path"');
+      assert(result !== null, 'should parse single path mapping');
+      assertEqual(result!.flag, 'url');
+      assertEqual(result!.mappings.plugins, 'custom/path');
+      assertEqual(result!.mappings.agents, undefined);
+      assertEqual(result!.mappings.instructions, undefined);
+    },
+
+    'parseConfigArgument: single mapping with null value': () => {
+      const result = parseConfigArgument('--url:agents=null');
+      assert(result !== null, 'should parse null mapping');
+      assertEqual(result!.flag, 'url');
+      assertEqual(result!.mappings.agents, null);
+      assertEqual(result!.mappings.skills, undefined);
+    },
+
+    'parseConfigArgument: source flag with root': () => {
+      const result = parseConfigArgument('--source:skills=root');
+      assert(result !== null, 'should parse source config argument');
+      assertEqual(result!.flag, 'source');
+      assertEqual(result!.mappings.skills, 'root');
+      assertEqual(result!.mappings.agents, null);
+    },
+
+    'parseConfigArgument: source flag with custom path': () => {
+      const result = parseConfigArgument('--source:instructions="custom/path"');
+      assert(result !== null, 'should parse source with custom path');
+      assertEqual(result!.flag, 'source');
+      assertEqual(result!.mappings.instructions, 'custom/path');
+      assertEqual(result!.mappings.agents, undefined);
+    },
+
+    'parseConfigArgument: multiple mappings with bracket syntax': () => {
+      const result = parseConfigArgument('--url:[plugins="custom/path",instructions="other/path"]');
+      assert(result !== null, 'should parse multiple mappings');
+      assertEqual(result!.flag, 'url');
+      assertEqual(result!.mappings.plugins, 'custom/path');
+      assertEqual(result!.mappings.instructions, 'other/path');
+      assertEqual(result!.mappings.agents, undefined);
+    },
+
+    'parseConfigArgument: multiple mappings with root nullifies others': () => {
+      const result = parseConfigArgument('--source:[skills=root,plugins="custom"]');
+      assert(result !== null, 'should parse mixed root+path');
+      assertEqual(result!.flag, 'source');
+      assertEqual(result!.mappings.skills, 'root');
+      assertEqual(result!.mappings.plugins, 'custom');
+      assertEqual(result!.mappings.agents, null);
+      assertEqual(result!.mappings.instructions, null);
+      assertEqual(result!.mappings.prompts, null);
+      assertEqual(result!.mappings.workflows, null);
+    },
+
+    'parseConfigArgument: unquoted custom path': () => {
+      const result = parseConfigArgument('--url:plugins=custom/path');
+      assert(result !== null, 'should parse unquoted path');
+      assertEqual(result!.mappings.plugins, 'custom/path');
+    },
+
+    'parseConfigArgument: invalid category returns null': () => {
+      const result = parseConfigArgument('--url:invalid=root');
+      assertEqual(result, null, 'invalid category should return null');
+    },
+
+    'parseConfigArgument: missing equals returns null': () => {
+      const result = parseConfigArgument('--url:noequals');
+      assertEqual(result, null, 'missing equals should return null');
+    },
+
+    'parseConfigArgument: empty value returns null': () => {
+      const result = parseConfigArgument('--url:skills=');
+      assertEqual(result, null, 'empty value should return null');
+    },
+
+    'parseConfigArgument: non-matching flag returns null': () => {
+      const result = parseConfigArgument('--use:skills=root');
+      assertEqual(result, null, 'non url/source flag should return null');
+    },
+
+    'parseConfigArgument: bracket syntax with single entry': () => {
+      const result = parseConfigArgument('--url:[skills=root]');
+      assert(result !== null, 'should parse bracket with single entry');
+      assertEqual(result!.mappings.skills, 'root');
+      assertEqual(result!.mappings.agents, null);
+    },
+
+    'parseConfigArgument: empty bracket returns null': () => {
+      const result = parseConfigArgument('--url:[]');
+      assertEqual(result, null, 'empty brackets should return null');
+    },
+
+    // --- SourceNotFoundError tests ---
+
+    'SourceNotFoundError: has correct name and message for label': () => {
+      const err = new SourceNotFoundError('nonexistent');
+      assertEqual(err.name, 'SourceNotFoundError');
+      assert(err.message.includes('nonexistent'), 'message should include source identifier');
+      assert(err.message.includes('--list-source'), 'message should suggest --list-source');
+    },
+
+    'SourceNotFoundError: has correct name and message for URL': () => {
+      const err = new SourceNotFoundError('https://github.com/unknown/repo');
+      assertEqual(err.name, 'SourceNotFoundError');
+      assert(err.message.includes('https://github.com/unknown/repo'), 'message should include URL');
+    },
+
+    'resolveUseSource: returns undefined for URL not in config (triggers SourceNotFoundError)': () => {
+      const config = makeConfig();
+      const result = resolveUseSource(config, 'https://github.com/unknown/repo');
+      assertEqual(result, undefined, 'should return undefined for unconfigured URL');
+    },
+
+    'resolveUseSource: returns source with label for display banner': () => {
+      const config = makeConfig();
+      const result = resolveUseSource(config, 'testlabel');
+      assert(result !== undefined, 'should find source');
+      assertEqual(result!.label, 'testlabel');
+      assertEqual(result!.owner, 'test');
+      assertEqual(result!.repo, 'myrepo');
+    },
+
+    'resolveUseSource: source URL can be constructed from resolved source': () => {
+      const config = makeConfig();
+      const result = resolveUseSource(config, 'testlabel');
+      assert(result !== undefined, 'should find source');
+      const url = result!.baseUrl
+        ? `${result!.baseUrl}/${result!.owner}/${result!.repo}`
+        : `https://github.com/${result!.owner}/${result!.repo}`;
+      assertEqual(url, 'https://github.com/test/myrepo');
     },
   });
 }
