@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-12
+
+### Added
+
+#### Categories
+
+- Added `cookbook` category for browsing Copilot cookbook recipes and examples
+  - Short label: `ck` (e.g. `--search ck:recipe-name`)
+  - Default download path: `.github/cookbook`
+- Added `hooks` category for browsing Copilot hook definitions
+  - Short label: `h` (e.g. `--search h:hook-name`)
+  - Default download path: `.github/hooks`
+
 ## [1.1.0] - 2026-03-11
 
 ### Changed
@@ -107,5 +120,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Log level: info
 - Check for updates: enabled
 
+[1.2.0]: https://github.com/jhauga/cmd-git-copilot-tools/releases/tag/v1.2.0
 [1.1.0]: https://github.com/jhauga/cmd-git-copilot-tools/releases/tag/v1.1.0
 [1.0.0]: https://github.com/jhauga/cmd-git-copilot-tools/releases/tag/v1.0.0

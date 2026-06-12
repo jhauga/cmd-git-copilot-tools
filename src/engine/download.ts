@@ -22,8 +22,9 @@ export async function downloadFile(
 ): Promise<string> {
   const content = await getFileContent(downloadUrl, token);
   ensureDir(path.dirname(destPath));
-  fs.writeFileSync(destPath, content, 'utf-8');
-  return content;
+  const fileData = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+  fs.writeFileSync(destPath, fileData, 'utf-8');
+  return fileData;
 }
 
 async function downloadDirectory(
@@ -57,7 +58,7 @@ export async function downloadItem(
   let contentForHash: string;
 
   if (item.file.type === 'dir') {
-    // Skills and plugins: download entire directory
+    // Skills, plugins, and hooks: download entire directory
     localPath = path.join(targetBase, item.name);
     await downloadDirectory(item.repo, item.file.path, localPath, token);
     // Use path as hash source for directories

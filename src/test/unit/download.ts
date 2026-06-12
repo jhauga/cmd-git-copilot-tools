@@ -25,8 +25,8 @@ export async function runDownloadSuite(): Promise<SuiteResult> {
     'getFileSizeDisplay: megabytes': () => {
       assertEqual(getFileSizeDisplay(1572864), '1.5MB');
     },
-    'DOWNLOAD_PATHS: all six categories have paths': () => {
-      const categories: ToolCategory[] = ['agents', 'instructions', 'plugins', 'prompts', 'skills', 'workflows'];
+    'DOWNLOAD_PATHS: all eight categories have paths': () => {
+      const categories: ToolCategory[] = ['agents', 'cookbook', 'hooks', 'instructions', 'plugins', 'prompts', 'skills', 'workflows'];
       for (const cat of categories) {
         assert(typeof DOWNLOAD_PATHS[cat] === 'string', `${cat} should have a download path`);
         assert(DOWNLOAD_PATHS[cat].startsWith('.github/'), `${cat} path should start with .github/`);
@@ -50,9 +50,9 @@ export async function runDownloadSuite(): Promise<SuiteResult> {
     'DOWNLOAD_PATHS: workflows is .github/workflows': () => {
       assertEqual(DOWNLOAD_PATHS['workflows'], '.github/workflows');
     },
-    'ORDERED_CATEGORIES: has all six categories': () => {
-      assertEqual(ORDERED_CATEGORIES.length, 6);
-      const expected = ['agents', 'instructions', 'plugins', 'prompts', 'skills', 'workflows'];
+    'ORDERED_CATEGORIES: has all eight categories': () => {
+      assertEqual(ORDERED_CATEGORIES.length, 8);
+      const expected = ['agents', 'cookbook', 'hooks', 'instructions', 'plugins', 'prompts', 'skills', 'workflows'];
       for (const cat of expected) {
         assert(ORDERED_CATEGORIES.includes(cat as ToolCategory), `ORDERED_CATEGORIES should include ${cat}`);
       }
@@ -127,6 +127,23 @@ export async function runDownloadSuite(): Promise<SuiteResult> {
       assert(!matchesToolName('my-agent.agent.md', 'other-agent'), 'no false positive for agent');
       assert(!matchesToolName('my-prompt.prompt.md', 'my-agent'), 'no cross-category false positive');
       assert(!matchesToolName('my-flow.workflow.md', 'my-flo'), 'partial name does not match');
+    },
+    'DOWNLOAD_PATHS: hooks is .github/hooks': () => {
+      assertEqual(DOWNLOAD_PATHS['hooks'], '.github/hooks');
+    },
+    'download path composition: hook folder resolves under .github/hooks': () => {
+      const destDir = path.join('tmp', 'test');
+      const categoryPath = DOWNLOAD_PATHS['hooks'];
+      const name = 'session-logger';
+      const composed = path.join(destDir, categoryPath, name);
+      assert(composed.endsWith('session-logger'), 'path should end with hook folder name');
+      assert(composed.includes('.github'), 'path should include .github dir');
+      assert(composed.includes('hooks'), 'path should include hooks dir');
+    },
+    'matchesToolName: hook folder name matches bare name': () => {
+      assert(matchesToolName('session-logger', 'session-logger'), 'exact hook folder name matches');
+      assert(matchesToolName('tool-guardian', 'tool-guardian'), 'exact hook folder name matches');
+      assert(!matchesToolName('session-logger', 'session-auto-commit'), 'non-matching hook name returns false');
     },
   });
 }

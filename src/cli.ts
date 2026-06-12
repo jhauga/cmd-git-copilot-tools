@@ -48,6 +48,7 @@ OPTIONS:
   --all                         Show all categories pre-expanded
 
   --agent [name[,name...]]      Show agents, or download named agent(s)
+  --hook [name[,...]]           Show hooks, or download named hook folder(s)
   --instruction [name[,...]]    Show instructions, or download named instruction(s)
   --plugin [name[,...]]         Show plugins, or download named plugin(s)
   --prompt [name[,...]]         Show prompts, or download named prompt(s)
@@ -92,6 +93,9 @@ EXAMPLES:
   cmd-copilot-tools --agent
   cmd-copilot-tools --agent my-agent.agent.md
   cmd-copilot-tools --agent my-agent
+  cmd-copilot-tools --hook
+  cmd-copilot-tools --hook session-logger
+  cmd-copilot-tools --hook session-logger,tool-guardian
   cmd-copilot-tools --prompt my-prompt,other-prompt
   cmd-copilot-tools --instruction html-css-style-color-guide,update-code-from-shorthand
   cmd-copilot-tools --search copilot
@@ -157,7 +161,7 @@ function buildSearchQuery(terms: string[]): string {
 
 /** Valid category names for config-argument folder mappings. */
 const VALID_MAPPING_CATEGORIES = new Set<string>([
-  'agents', 'instructions', 'plugins', 'prompts', 'skills', 'workflows',
+  'agents', 'hooks', 'instructions', 'plugins', 'prompts', 'skills', 'workflows',
 ]);
 
 /**
@@ -224,6 +228,7 @@ function buildFolderMappingsFromEntries(entries: Array<{ category: ToolCategory;
   if (hasRoot) {
     const mappings: FolderMappings = {
       agents: null,
+      hooks: null,
       instructions: null,
       plugins: null,
       prompts: null,
@@ -309,7 +314,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       flags.add('list-source');
       i++;
     } else if (
-      arg === '--agent' || arg === '--instruction' || arg === '--plugin' ||
+      arg === '--agent' || arg === '--hook' || arg === '--instruction' || arg === '--plugin' ||
       arg === '--prompt' || arg === '--skill' || arg === '--workflow' ||
       arg === '--search' || arg === '--source' || arg === '--use' || arg === '--url' ||
       arg === '--set-default' || arg === '--remove-source' || arg === '--permission'
@@ -1020,6 +1025,7 @@ async function main(): Promise<void> {
   // Category-specific flags
   const categoryFlags: Array<[string, ToolCategory]> = [
     ['agent', 'agents'],
+    ['hook', 'hooks'],
     ['instruction', 'instructions'],
     ['plugin', 'plugins'],
     ['prompt', 'prompts'],

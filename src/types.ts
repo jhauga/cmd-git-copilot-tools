@@ -1,11 +1,13 @@
 // Core TypeScript interfaces for cmd-git-copilot-tools
 
-export type ToolCategory = 'agents' | 'instructions' | 'plugins' | 'prompts' | 'skills' | 'workflows';
+export type ToolCategory = 'agents' | 'cookbook' | 'hooks' | 'instructions' | 'plugins' | 'prompts' | 'skills' | 'workflows';
 
 export type FolderMappingValue = string | 'root' | null;
 
 export interface FolderMappings {
   agents?: FolderMappingValue;
+  cookbook?: FolderMappingValue;
+  hooks?: FolderMappingValue;
   instructions?: FolderMappingValue;
   plugins?: FolderMappingValue;
   prompts?: FolderMappingValue;
@@ -67,6 +69,8 @@ export interface Config {
 // Category label → ToolCategory mapping
 export const CATEGORY_LABELS: Record<string, ToolCategory> = {
   a: 'agents',
+  ck: 'cookbook',
+  h: 'hooks',
   i: 'instructions',
   pl: 'plugins',
   p: 'prompts',
@@ -77,6 +81,8 @@ export const CATEGORY_LABELS: Record<string, ToolCategory> = {
 // ToolCategory → display info
 export const CATEGORY_DISPLAY: Record<ToolCategory, { label: string; title: string }> = {
   agents: { label: 'a', title: 'Agents' },
+  cookbook: { label: 'ck', title: 'Cookbook' },
+  hooks: { label: 'h', title: 'Hooks' },
   instructions: { label: 'i', title: 'Instructions' },
   plugins: { label: 'pl', title: 'Plugins' },
   prompts: { label: 'p', title: 'Prompts' },
@@ -87,6 +93,8 @@ export const CATEGORY_DISPLAY: Record<ToolCategory, { label: string; title: stri
 // Ordered list of categories for display
 export const ORDERED_CATEGORIES: ToolCategory[] = [
   'agents',
+  'cookbook',
+  'hooks',
   'instructions',
   'plugins',
   'prompts',
@@ -97,6 +105,8 @@ export const ORDERED_CATEGORIES: ToolCategory[] = [
 // Default download paths
 export const DOWNLOAD_PATHS: Record<ToolCategory, string> = {
   agents: '.github/agents',
+  cookbook: '.github/cookbook',
+  hooks: '.github/hooks',
   instructions: '.github/instructions',
   plugins: '.github/plugins',
   prompts: '.github/prompts',

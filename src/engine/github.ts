@@ -170,8 +170,8 @@ export async function fetchCategory(
 
   const items: CopilotItem[] = [];
 
-  if (category === 'skills' || category === 'plugins') {
-    // Skills and plugins are directories (folders)
+  if (category === 'skills' || category === 'plugins' || category === 'hooks') {
+    // Skills, plugins, and hooks are directories (folders)
     for (const entry of entries) {
       if (entry.type === 'dir') {
         items.push({

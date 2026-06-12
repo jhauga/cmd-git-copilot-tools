@@ -44,13 +44,14 @@ An array of GitHub repository sources to browse content from. Each entry is an o
 
 #### `folderMappings`
 
-When a source repository does not use the default folder layout, configure custom paths for each content category. If omitted, the tool uses the standard category name as the folder path (e.g., `agents`, `instructions`, `plugins`, `prompts`, `skills`, `workflows`).
+When a source repository does not use the default folder layout, configure custom paths for each content category. If omitted, the tool uses the standard category name as the folder path (e.g., `agents`, `hooks`, `instructions`, `plugins`, `prompts`, `skills`, `workflows`).
 
 Each property in `folderMappings` corresponds to a content category:
 
 | Property | Type | Description |
 | --- | --- | --- |
 | `agents` | `string \| null` | Path to agents content, `"root"`, or `null` to exclude |
+| `hooks` | `string \| null` | Path to hooks content, `"root"`, or `null` to exclude |
 | `instructions` | `string \| null` | Path to instructions content, `"root"`, or `null` to exclude |
 | `plugins` | `string \| null` | Path to plugins content, `"root"`, or `null` to exclude |
 | `prompts` | `string \| null` | Path to prompts content, `"root"`, or `null` to exclude |

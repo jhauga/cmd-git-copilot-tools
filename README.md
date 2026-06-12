@@ -2,7 +2,7 @@
 
 - `ctrl + click` for full [documentation](https://jhauga.github.io/cmd-git-copilot-tools/index.html)
 
-A command-line tool that allows you to browse, preview, and download GitHub Copilot customizations. The default repository is [github/awesome-copilot](https://github.com/github/awesome-copilot), but other repositories with Copilot `agent`, `instruction`, `plugin`, `prompt`, `skill`, and `workflow` tools can be used.
+A command-line tool that allows you to browse, preview, and download GitHub Copilot customizations. The default repository is [github/awesome-copilot](https://github.com/github/awesome-copilot), but other repositories with Copilot `agent`, `cookbook`, `hook`, `instruction`, `plugin`, `prompt`, `skill`, and `workflow` tools can be used.
 
 This tool is a command-line port of [jhauga/vscode-git-copilot-tools](https://github.com/jhauga/vscode-git-copilot-tools). The core engine is host-agnostic and can be used as a backend for editor extensions — see [docs/api.md](docs/api.md).
 
@@ -28,7 +28,7 @@ npm install cmd-git-copilot-tools
 
 ## Features
 
-- **Browse**: Explore agents, instructions, plugins, prompts, skills, and workflows in an interactive terminal list
+- **Browse**: Explore agents, cookbook, hooks, instructions, plugins, prompts, skills, and workflows in an interactive terminal list
 - **Search**: Quickly find tools with real-time filtering across all categories
 - **Download**: Save files to appropriate `.github/` folders in your current directory
 - **Caching**: Smart caching for better performance
@@ -46,6 +46,10 @@ cmd-copilot-tools --all
 
 # Browse only agents
 cmd-copilot-tools --agent
+
+# Browse hooks or download a specific hook folder
+cmd-copilot-tools --hook
+cmd-copilot-tools --hook session-logger
 
 # Download a specific prompt (extension optional)
 cmd-copilot-tools --prompt my-prompt.prompt.md
@@ -228,6 +232,7 @@ Type `/` to enter search mode, then type your query:
 | PgUp / PgDn | Page through list |
 | `all` + Enter | Show all categories |
 | `a` + Enter | Show agents only |
+| `h` + Enter | Show hooks only |
 | `i` + Enter | Show instructions only |
 | `pl` + Enter | Show plugins only |
 | `p` + Enter | Show prompts only |
@@ -250,6 +255,7 @@ cmd-copilot-tools [options]
 | *(no args)* | Launch interactive terminal browser |
 | `--all` | Show all categories pre-expanded |
 | `--agent [name,...]` | Show agents, or download named agent(s). Extension (`.agent.md`) is optional |
+| `--hook [name,...]` | Show hooks, or download named hook folder(s) |
 | `--instruction [name,...]` | Show instructions, or download named instruction(s). Extension (`.instructions.md`) is optional |
 | `--plugin [name,...]` | Show plugins, or download named plugin(s) |
 | `--prompt [name,...]` | Show prompts, or download named prompt(s). Extension (`.prompt.md`) is optional |
@@ -302,6 +308,7 @@ Notices:
 Downloaded files are organized in your current directory as follows:
 
 - **Agents** → `.github/agents/`
+- **Hooks** → `.github/hooks/` *(entire hook folders with config JSON and supporting scripts)*
 - **Instructions** → `.github/instructions/`
 - **Plugins** → `.github/plugins/`
 - **Prompts** → `.github/prompts/`
@@ -310,7 +317,7 @@ Downloaded files are organized in your current directory as follows:
 
 These folders are created automatically if they don't exist.
 
-> **Note:** Skills and plugins are folder-based tools — downloading them copies the entire directory structure.
+> **Note:** Skills, plugins, and hooks are folder-based tools — downloading them copies the entire directory structure to the appropriate `.github/` subfolder.
 
 ## Managing Sources
 

@@ -113,6 +113,7 @@ interface RepositorySource {
   branch?: string;
   folderMappings?: {     // Custom folder-to-category mappings
     agents?: string | 'root' | null;
+    hooks?: string | 'root' | null;
     instructions?: string | 'root' | null;
     plugins?: string | 'root' | null;
     prompts?: string | 'root' | null;
@@ -148,7 +149,7 @@ const items = await fetchAllToolsFromSources(config.sources, token, config.cache
 interface CopilotItem {
   id: string;
   name: string;
-  category: 'agents' | 'instructions' | 'plugins' | 'prompts' | 'skills' | 'workflows';
+  category: 'agents' | 'hooks' | 'instructions' | 'plugins' | 'prompts' | 'skills' | 'workflows';
   repo: RepositorySource;
   file: {
     name: string;
@@ -206,6 +207,7 @@ const item = findByCode(items, 'a1', 'all');        // first agent in 'all' view
 | Label | Category |
 | --- | --- |
 | `a` | `agents` |
+| `h` | `hooks` |
 | `i` | `instructions` |
 | `pl` | `plugins` |
 | `p` | `prompts` |
@@ -236,13 +238,14 @@ console.log(`Saved to: ${meta.localPath}`);
 | Category | Saved to (relative to `destDir`) |
 | --- | --- |
 | `agents` | `.github/agents/<name>` |
+| `hooks` | `.github/hooks/<name>/` *(directory)* |
 | `instructions` | `.github/instructions/<name>` |
 | `plugins` | `.github/plugins/<name>/` *(directory)* |
 | `prompts` | `.github/prompts/<name>` |
 | `skills` | `.github/skills/<name>/` *(directory)* |
 | `workflows` | `.github/workflows/<name>` |
 
-Skills and plugins are folder-based tools — the entire directory is downloaded recursively.
+Skills, plugins, and hooks are folder-based tools — the entire directory is downloaded recursively.
 
 #### `DownloadMetadata` type
 

@@ -14,8 +14,8 @@
   },
   "qna": "https://github.com/jhauga/cmd-git-copilot-tools/issues",
   "homepage": "https://github.com/jhauga/cmd-git-copilot-tools",
-  "description": "Browse and download agents, instructions, plugins, prompts, skills, and workflows from GitHub repositories with Copilot custom tools. Command-line tool port of the original VS Code extension.",
-  "version": "1.1.0",
+  "description": "Browse and download agents, cookbook, hooks, instructions, plugins, prompts, skills, and workflows from GitHub repositories with Copilot custom tools. Command-line tool port of the original VS Code extension.",
+  "version": "1.2.0",
   "license": "MIT",
   "keywords": [
     "github-copilot",
