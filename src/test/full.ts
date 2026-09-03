@@ -5,7 +5,8 @@ import { loadConfig } from '../engine/config.js';
 import { getToken, fetchAllToolsFromSources } from '../engine/github.js';
 import { filterByCategory } from '../engine/search.js';
 import { downloadItem } from '../engine/download.js';
-import { ORDERED_CATEGORIES, DOWNLOAD_PATHS } from '../types.js';
+import { resolveAiFolder, resolveCategoryDir } from '../engine/folder.js';
+import { ORDERED_CATEGORIES } from '../types.js';
 import type { CopilotItem, ToolCategory } from '../types.js';
 import { runSuite, assert, assertEqual } from './runner.js';
 import type { SuiteResult } from './runner.js';
@@ -134,17 +135,45 @@ export async function runFullTest(): Promise<SuiteResult> {
   tests['verify downloaded files match selected names'] = () => {
     for (let c = 0; c < ORDERED_CATEGORIES.length; c++) {
       const cat = ORDERED_CATEGORIES[c] as ToolCategory;
+      const catItems = filterByCategory(allItems, cat);
+      const indices = selectedIndices[c]!;
       const names = selectedNames[c]!;
-      const categoryPath = DOWNLOAD_PATHS[cat];
 
-      for (const name of names) {
-        const expectedPath = path.join(tempDir, categoryPath, name);
+      for (let i = 0; i < indices.length; i++) {
+        const item = catItems[indices[i]! - 1];
+        if (!item) {continue;}
+        // Resolve the same way downloadItem does, so a source that sets its own
+        // aiFolder does not break the assertion.
+        const categoryDir = resolveCategoryDir(tempDir, cat, resolveAiFolder({ source: item.repo }));
+        const expectedPath = path.join(categoryDir, names[i]!);
         assert(
           fs.existsSync(expectedPath),
           `expected downloaded file or directory at: ${expectedPath}`
         );
       }
     }
+  };
+
+  tests['download into a custom A.I. folder'] = async () => {
+    const customFolder = '.copilot-test';
+    const firstCategory = ORDERED_CATEGORIES.find(
+      cat => filterByCategory(allItems, cat).length > 0
+    );
+    assert(firstCategory !== undefined, 'at least one category should have items');
+
+    const item = filterByCategory(allItems, firstCategory!)[0]!;
+    const meta = await downloadItem(item, tempDir, token, { folderOverride: customFolder });
+
+    const expectedDir = path.join(tempDir, customFolder, firstCategory!);
+    assertEqual(
+      path.dirname(meta.localPath), expectedDir,
+      'folderOverride should place the download under the custom A.I. folder'
+    );
+    assert(fs.existsSync(meta.localPath), `downloaded item should exist at: ${meta.localPath}`);
+    assert(
+      !meta.localPath.includes('.github'),
+      'folderOverride should bypass the default .github folder'
+    );
   };
 
   let suiteResult: SuiteResult;

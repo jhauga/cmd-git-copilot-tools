@@ -22,6 +22,12 @@ export interface RepositorySource {
   baseUrl?: string;
   branch?: string;
   folderMappings?: FolderMappings;
+  /**
+   * A.I. folder this source downloads into, relative to the destination
+   * directory (default: `.github`). Overrides the config-level `aiFolder`,
+   * and is itself overridden by the `-f, --folder` option.
+   */
+  aiFolder?: string;
 }
 
 export interface GitHubFileEntry {
@@ -58,6 +64,11 @@ export interface DownloadMetadata {
 export interface Config {
   sources: RepositorySource[];
   defaultSourceIndex: number;
+  /**
+   * Default A.I. folder tools download into (default: `.github`).
+   * Set with `--set-default folder=<path>`.
+   */
+  aiFolder?: string;
   enterpriseToken?: string;
   cacheTimeout: number;
   logLevel: 'error' | 'warn' | 'info' | 'debug' | 'trace';
@@ -102,7 +113,12 @@ export const ORDERED_CATEGORIES: ToolCategory[] = [
   'workflows',
 ];
 
-// Default download paths
+// A.I. folder used when nothing overrides it
+export const DEFAULT_AI_FOLDER = '.github';
+
+// Default download paths, using the default A.I. folder.
+// When an A.I. folder override is in play, compose paths with
+// resolveCategoryDir() from engine/folder.ts instead.
 export const DOWNLOAD_PATHS: Record<ToolCategory, string> = {
   agents: '.github/agents',
   cookbook: '.github/cookbook',
@@ -147,5 +163,16 @@ export class MissingArgumentError extends Error {
   constructor(flag: string, description: string) {
     super(`${flag} requires ${description}. See --help for usage.`);
     this.name = 'MissingArgumentError';
+  }
+}
+
+export class AbsoluteFolderPathError extends Error {
+  constructor(folderPath: string) {
+    super(
+      `Absolute path '${folderPath}' is not allowed when setting the default A.I. folder. ` +
+      `The default must be relative to the download directory (example: --set-default folder=.claude). ` +
+      `To download to an absolute path for a single run, use: --folder "${folderPath}"`
+    );
+    this.name = 'AbsoluteFolderPathError';
   }
 }

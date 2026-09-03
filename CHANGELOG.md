@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-beta.1] - 2026-09-03
+
+### Added
+
+#### Download Location
+
+- Added the `aiFolder` property, which sets the parent folder downloaded tools are organized under (default: `.github`)
+  - Configurable per source, so one repository can download to a different folder than the rest
+  - Configurable globally through the config file and the `--set-default` command
+- Added the `-f, --folder <path>` option, which sets the A.I. folder for a single run and bypasses every configured default
+  - The only place an absolute path is accepted
+  - Works with named downloads and with the interactive browser
+- Added the `folder=` qualifier to `--set-default`, which saves the default A.I. folder
+  - `--set-default folder=.claude` makes `.claude/` the default instead of `.github/`
+  - The qualifier is strict: only the exact word `folder` followed by `=` is read as a folder, so `--set-default <url|label>` keeps its original meaning
+- Added `AbsoluteFolderPathError`, raised when an absolute path is given to the saved default. Absolute paths are detected in POSIX, Windows drive, UNC, and home-anchored forms on every platform
+- Added `--list-source` output for the default A.I. folder and for any source that overrides it
+
+#### Programmatic API
+
+- Added the `engine/folder.ts` module, exporting `isAbsolutePath`, `normalizeAiFolder`, `resolveAiFolder`, and `resolveCategoryDir`
+- Added the `DownloadOptions` argument to `downloadItem` and `downloadItemsByName`, carrying `folderOverride` and `configFolder`
+- Added `setDefaultFolder` to the config module, and the `DEFAULT_AI_FOLDER` constant
+
+#### Tests
+
+- Added the `folder` test suite covering absolute path detection, folder normalization, resolution precedence, path composition, the `--set-default` qualifier, and the absolute path rejection (`--test:folder`, `npm run test:folder`)
+- Added an integration case that downloads into a custom A.I. folder and verifies the destination
+
+### Changed
+
+- Download paths are now resolved at download time rather than read from a fixed table. `DOWNLOAD_PATHS` remains exported and still describes the default `.github` layout
+- The integration test resolves expected download paths the same way the downloader does, so a source with its own `aiFolder` no longer breaks the assertions
+
+### Fixed
+
+- The `User-Agent` header sent to the GitHub API reports the package version instead of a hardcoded `1.0.0`
+- `loadPermissions` no longer throws `ReferenceError: __BUILD_ID__ is not defined` when the package is imported as a library. The build ID is now defined for the library bundle as well as the CLI bundle
+
 ## [1.2.0] - 2026-06-12
 
 ### Added

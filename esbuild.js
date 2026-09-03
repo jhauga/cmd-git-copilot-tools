@@ -1,7 +1,16 @@
 const esbuild = require("esbuild");
+const { version } = require("./package.json");
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+
+// Compile-time constants shared by both bundles. __BUILD_ID__ detects a new
+// build at runtime to reset firstTimeUse; __PKG_VERSION__ keeps the User-Agent
+// in step with package.json.
+const define = {
+	'__BUILD_ID__': JSON.stringify(Date.now().toString()),
+	'__PKG_VERSION__': JSON.stringify(version),
+};
 
 /**
  * @type {import('esbuild').Plugin}
@@ -39,10 +48,7 @@ async function main() {
 		banner: {
 			js: '#!/usr/bin/env node',
 		},
-		define: {
-			// Baked-in build ID — used at runtime to detect a new build and reset firstTimeUse
-			'__BUILD_ID__': JSON.stringify(Date.now().toString()),
-		},
+		define,
 		logLevel: 'silent',
 		plugins: [
 			/* add to the end of plugins array */
@@ -63,6 +69,7 @@ async function main() {
 		platform: 'node',
 		outfile: 'dist/index.js',
 		external: ['axios'], // Don't bundle axios for library usage
+		define,
 		logLevel: 'silent',
 		plugins: [
 			esbuildProblemMatcherPlugin,

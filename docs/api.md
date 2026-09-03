@@ -15,6 +15,7 @@ src/
 │   ├── github.ts     ← GitHub REST API client
 │   ├── cache.ts      ← In-memory TTL cache
 │   ├── download.ts   ← File and directory download
+│   ├── folder.ts     ← A.I. folder resolution for download paths
 │   └── search.ts     ← Search, filter, and selection helpers
 ├── ui/               ← Terminal UI (CLI-specific, not part of the API)
 │   ├── renderer.ts
@@ -77,6 +78,7 @@ import {
   addSource,        // Add a GitHub repository source
   removeSource,     // Remove a source by URL or label
   setDefaultSource, // Set which source is the default
+  setDefaultFolder, // Set the default A.I. folder (rejects absolute paths)
   findSource,       // Look up a source by URL or label
   listSources,      // Print configured sources to stdout
   parseGitHubUrl,   // Parse a GitHub URL into owner/repo/branch/baseUrl
@@ -94,6 +96,7 @@ const source = findSource(config, 'github/awesome-copilot');
 interface Config {
   sources: RepositorySource[];
   defaultSourceIndex: number;
+  aiFolder?: string;               // Default A.I. folder, default '.github'
   enterpriseToken?: string;
   cacheTimeout: number;            // milliseconds, default 3600000 (1 hour)
   logLevel: 'error' | 'warn' | 'info' | 'debug' | 'trace';
@@ -120,6 +123,7 @@ interface RepositorySource {
     skills?: string | 'root' | null;
     workflows?: string | 'root' | null;
   };
+  aiFolder?: string;     // A.I. folder for this source (relative paths only)
 }
 ```
 
@@ -231,19 +235,40 @@ import {
 // Example: download an item into the current workspace folder
 const meta = await downloadItem(item, workspaceFolder, token);
 console.log(`Saved to: ${meta.localPath}`);
+
+// Example: download into a custom A.I. folder instead of .github
+const custom = await downloadItem(item, workspaceFolder, token, {
+  folderOverride: '.claude',
+});
 ```
+
+#### `DownloadOptions` type
+
+Both `downloadItem` and `downloadItemsByName` accept an optional fourth argument controlling which A.I. folder the content lands in.
+
+```typescript
+interface DownloadOptions {
+  folderOverride?: string;  // Highest precedence; may be an absolute path
+  configFolder?: string;    // Config-level default (config.aiFolder)
+}
+```
+
+Omit it and the item's own source is consulted, then the built-in `.github` default.
 
 #### Download paths
 
 | Category | Saved to (relative to `destDir`) |
 | --- | --- |
-| `agents` | `.github/agents/<name>` |
-| `hooks` | `.github/hooks/<name>/` *(directory)* |
-| `instructions` | `.github/instructions/<name>` |
-| `plugins` | `.github/plugins/<name>/` *(directory)* |
-| `prompts` | `.github/prompts/<name>` |
-| `skills` | `.github/skills/<name>/` *(directory)* |
-| `workflows` | `.github/workflows/<name>` |
+| `agents` | `<ai-folder>/agents/<name>` |
+| `cookbook` | `<ai-folder>/cookbook/<name>` |
+| `hooks` | `<ai-folder>/hooks/<name>/` *(directory)* |
+| `instructions` | `<ai-folder>/instructions/<name>` |
+| `plugins` | `<ai-folder>/plugins/<name>/` *(directory)* |
+| `prompts` | `<ai-folder>/prompts/<name>` |
+| `skills` | `<ai-folder>/skills/<name>/` *(directory)* |
+| `workflows` | `<ai-folder>/workflows/<name>` |
+
+`<ai-folder>` defaults to `.github`. An absolute A.I. folder replaces `destDir` entirely rather than resolving beneath it.
 
 Skills, plugins, and hooks are folder-based tools — the entire directory is downloaded recursively.
 
@@ -263,6 +288,31 @@ interface DownloadMetadata {
   localPath: string;       // Absolute path where the item was saved
 }
 ```
+
+---
+
+### `engine/folder.ts` — A.I. Folder Resolution
+
+Resolves which A.I. folder a download lands in, and composes the destination directory for a category.
+
+```typescript
+import {
+  isAbsolutePath,     // Platform-independent absolute path check
+  normalizeAiFolder,  // Trim and strip trailing separators; empty falls back to '.github'
+  resolveAiFolder,    // Apply the precedence rules below
+  resolveCategoryDir, // Compose destDir + A.I. folder + category
+} from 'cmd-git-copilot-tools';
+
+const folder = resolveAiFolder({
+  cliFolder: options.folder,   // 1. -f, --folder
+  source,                      // 2. source.aiFolder
+  config,                      // 3. config.aiFolder
+});                            // 4. '.github'
+
+const dir = resolveCategoryDir(workspaceFolder, 'skills', folder);
+```
+
+`isAbsolutePath` recognizes POSIX roots (`/opt/ai`), Windows drive paths (`C:\ai`), UNC shares (`\\server\share`), and home-anchored paths (`~/ai`) regardless of the platform it runs on. `setDefaultFolder` uses it to reject absolute values with an `AbsoluteFolderPathError`; only `folderOverride` accepts them.
 
 ---
 
@@ -356,11 +406,13 @@ import type {
   InvalidUrlError,
   OnlyOneSourceError,
   MissingArgumentError,
+  AbsoluteFolderPathError,
   // Constants:
   CATEGORY_LABELS,     // Record<string, ToolCategory>
   CATEGORY_DISPLAY,    // Record<ToolCategory, { label, title }>
   ORDERED_CATEGORIES,  // ToolCategory[] in display order
-  DOWNLOAD_PATHS,      // Record<ToolCategory, string> — relative .github/ paths
+  DOWNLOAD_PATHS,      // Record<ToolCategory, string> — default .github/ paths
+  DEFAULT_AI_FOLDER,   // '.github'
 } from 'cmd-git-copilot-tools/src/types.js';
 ```
 

@@ -1,8 +1,9 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { loadConfig, saveConfig, addSource, removeSource, setDefaultSource, findSource, listSources, parseGitHubUrl, getConfigPath } from './engine/config.js';
+import { loadConfig, saveConfig, addSource, removeSource, setDefaultSource, setDefaultFolder, findSource, listSources, parseGitHubUrl, getConfigPath } from './engine/config.js';
 import { fetchAllToolsFromSources, fetchCategory, getToken, fetchDirectoryTree } from './engine/github.js';
 import { downloadItem, downloadItemsByName } from './engine/download.js';
+import type { DownloadOptions } from './engine/download.js';
 import { searchTools, filterByCategory, groupBySource } from './engine/search.js';
 import { runInteractiveUI, printToolsList } from './ui/terminal.js';
 import type { SourceDisplayInfo } from './ui/terminal.js';
@@ -11,7 +12,7 @@ import { readConfirm, readLine, readAuthPermission } from './ui/input.js';
 import { loadPermissions, savePermissions } from './engine/permissions.js';
 import type { PermissionState } from './engine/permissions.js';
 import type { ToolCategory, RepositorySource, Config, FolderMappings } from './types.js';
-import { CATEGORY_LABELS, ORDERED_CATEGORIES, CATEGORY_DISPLAY, SourceNotFoundError } from './types.js';
+import { CATEGORY_LABELS, ORDERED_CATEGORIES, CATEGORY_DISPLAY, DEFAULT_AI_FOLDER, SourceNotFoundError } from './types.js';
 import { printSuiteResult, printSummary, logResults } from './test/runner.js';
 import type { SuiteResult } from './test/runner.js';
 import { runSearchSuite } from './test/unit/search.js';
@@ -20,6 +21,7 @@ import { runDownloadSuite } from './test/unit/download.js';
 import { runCliSuite } from './test/unit/cli.js';
 import { runPermissionsSuite } from './test/unit/permissions.js';
 import { runProgrammaticSuite } from './test/unit/programmatic.js';
+import { runFolderSuite } from './test/unit/folder.js';
 import { runFullTest } from './test/full.js';
 
 // Load version from package.json
@@ -69,11 +71,17 @@ OPTIONS:
   --url:<map>=<val> <url>       Use a temp source with a folder mapping override
   --url:[m=v,...] <url>         Use a temp source with multiple folder mapping overrides
   --set-default <url|label>     Set the default source permanently
+  --set-default folder=<path>   Set the default A.I. folder permanently.
+                                Relative paths only (e.g. .claude, docs/ai)
   --remove-source <url|label>   Remove a configured source
   --list-source                 List all configured source repositories
 
+  -f, --folder <path>           Download into <path>/<category> for this run,
+                                bypassing the configured default A.I. folder.
+                                The only place an absolute path is accepted.
+
   --test                        Run all tests (unit + integration)
-  --test:<name>                 Run a specific test suite (search, config, download, cli, permissions, programmatic, full)
+  --test:<name>                 Run a specific test suite (search, config, download, folder, cli, permissions, programmatic, full)
   --test:log                    Run all tests and save results to logs/ folder
   --test:<name>:log             Run specific suite and save results to logs/ folder
   --log                         Save test results to logs/ (requires --test)
@@ -112,6 +120,10 @@ EXAMPLES:
   cmd-copilot-tools --source:skills=root https://github.com/owner/repo
   cmd-copilot-tools --source:instructions="custom/path" https://github.com/owner/repo tool
   cmd-copilot-tools --list-source
+  cmd-copilot-tools --set-default myrepo
+  cmd-copilot-tools --set-default folder=.claude
+  cmd-copilot-tools --folder .claude --skill my-skill
+  cmd-copilot-tools -f ./build/ai --agent my-agent
   cmd-copilot-tools --test
   cmd-copilot-tools --test:search
   cmd-copilot-tools --test:programmatic
@@ -130,7 +142,12 @@ CONFIG FILE:
   ${getConfigPath()}
 
 DOWNLOAD LOCATION:
-  Tools are downloaded to .github/<category>/ in the current directory.
+  Tools are downloaded to <ai-folder>/<category>/ in the current directory,
+  where <ai-folder> is resolved in this order:
+    1. -f, --folder <path>          (this run only; absolute paths allowed)
+    2. the source's aiFolder        (per-source, set in the config file)
+    3. --set-default folder=<path>  (saved default, relative paths only)
+    4. .github                      (built-in default)
 `);
 }
 
@@ -284,6 +301,35 @@ export function parseConfigArgument(arg: string): { flag: string; mappings: Fold
   return { flag, mappings: buildFolderMappingsFromEntries(entries) };
 }
 
+/**
+ * What a `--set-default` value is asking for.
+ *
+ * The qualifier is strict: only the literal word `folder` immediately followed
+ * by `=` selects the A.I. folder. Anything else - including a source labelled
+ * "folder", or a near miss like `folders=` - keeps the original meaning and
+ * sets the default download source.
+ */
+export interface SetDefaultTarget {
+  kind: 'folder' | 'source';
+  value: string;
+}
+
+export function parseSetDefaultArgument(value: string): SetDefaultTarget {
+  const match = /^folder=([\s\S]*)$/.exec(value);
+  if (match) {
+    return { kind: 'folder', value: match[1]!.trim() };
+  }
+  return { kind: 'source', value };
+}
+
+/** Single-dash options that must never be swallowed as another flag's value. */
+const SHORT_OPTIONS = new Set(['-h', '-v', '-f']);
+
+/** True when the token starts a new option rather than continuing a value list. */
+function isOptionToken(arg: string): boolean {
+  return arg.startsWith('--') || arg === '/?' || SHORT_OPTIONS.has(arg);
+}
+
 interface ParsedArgs {
   flags: Set<string>;
   values: Map<string, string[]>;
@@ -317,13 +363,14 @@ function parseArgs(argv: string[]): ParsedArgs {
       arg === '--agent' || arg === '--hook' || arg === '--instruction' || arg === '--plugin' ||
       arg === '--prompt' || arg === '--skill' || arg === '--workflow' ||
       arg === '--search' || arg === '--source' || arg === '--use' || arg === '--url' ||
-      arg === '--set-default' || arg === '--remove-source' || arg === '--permission'
+      arg === '--set-default' || arg === '--remove-source' || arg === '--permission' ||
+      arg === '--folder' || arg === '-f'
     ) {
-      const flag = arg.slice(2);
+      const flag = arg === '-f' ? 'folder' : arg.slice(2);
       const vals: string[] = [];
       i++;
       // Collect following non-flag args as values
-      while (i < argv.length && !argv[i]!.startsWith('--') && argv[i] !== '/?') {
+      while (i < argv.length && !isOptionToken(argv[i]!)) {
         vals.push(argv[i]!);
         i++;
       }
@@ -355,7 +402,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       configArgs.set(parsed.flag, parsed.mappings);
       const vals: string[] = [];
       i++;
-      while (i < argv.length && !argv[i]!.startsWith('--') && argv[i] !== '/?') {
+      while (i < argv.length && !isOptionToken(argv[i]!)) {
         vals.push(argv[i]!);
         i++;
       }
@@ -598,7 +645,8 @@ async function handleCategoryFlag(
   config: ReturnType<typeof loadConfig>,
   token: string | undefined,
   useSource?: string,
-  tempSource?: RepositorySource
+  tempSource?: RepositorySource,
+  downloadOptions: DownloadOptions = {}
 ): Promise<void> {
   const category = flag as ToolCategory;
 
@@ -628,7 +676,7 @@ async function handleCategoryFlag(
   if (toolNames.length === 0) {
     // Show interactive list filtered to this category
     if (process.stdout.isTTY) {
-      await runInteractiveUI(config, category, sourceOverride);
+      await runInteractiveUI(config, category, sourceOverride, downloadOptions.folderOverride);
     } else {
       // Non-interactive: fetch and print
       const items = await fetchAllToolsFromSources(sources, token, config.cacheTimeout);
@@ -643,14 +691,14 @@ async function handleCategoryFlag(
   const catItems = filterByCategory(items, category);
 
   try {
-    await downloadItemsByName(catItems, toolNames, process.cwd(), token);
+    await downloadItemsByName(catItems, toolNames, process.cwd(), token, downloadOptions);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 }
 
-const KNOWN_UNIT_TESTS = ['search', 'config', 'download', 'cli', 'permissions', 'programmatic', 'full'];
+const KNOWN_UNIT_TESTS = ['search', 'config', 'download', 'folder', 'cli', 'permissions', 'programmatic', 'full'];
 
 async function runTests(unitName: string | undefined, doLog: boolean): Promise<void> {
   const suites: SuiteResult[] = [];
@@ -660,6 +708,7 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
     suites.push(await runSearchSuite());
     suites.push(await runConfigSuite());
     suites.push(await runDownloadSuite());
+    suites.push(await runFolderSuite());
     suites.push(await runCliSuite());
     suites.push(await runPermissionsSuite());
     suites.push(await runProgrammaticSuite());
@@ -670,6 +719,8 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
     suites.push(await runConfigSuite());
   } else if (unitName === 'download') {
     suites.push(await runDownloadSuite());
+  } else if (unitName === 'folder') {
+    suites.push(await runFolderSuite());
   } else if (unitName === 'cli') {
     suites.push(await runCliSuite());
   } else if (unitName === 'permissions') {
@@ -892,6 +943,20 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
+
+  // -f, --folder bypasses every configured default for this run only.
+  // It is the one place an absolute path is accepted.
+  let folderOverride: string | undefined;
+  if (values.has('folder')) {
+    const rawFolder = values.get('folder')?.[0]?.trim();
+    if (!rawFolder) {
+      console.error('-f, --folder requires a folder path. Example: --folder .claude');
+      process.exit(1);
+    }
+    folderOverride = rawFolder;
+  }
+  const downloadOptions: DownloadOptions = { folderOverride, configFolder: config.aiFolder };
+
   const useSource = values.get('use')?.[0];
   let tempUrl: string | undefined = values.get('url')?.[0];
 
@@ -932,13 +997,30 @@ async function main(): Promise<void> {
   }
 
   if (values.has('set-default')) {
-    const urlOrLabel = values.get('set-default')?.[0];
-    if (!urlOrLabel) {
-      console.error('--set-default requires a URL or label. Use --list-source to see options.');
+    const rawTarget = values.get('set-default')?.[0];
+    if (!rawTarget) {
+      console.error('--set-default requires a URL, label, or folder=<path>. Use --list-source to see options.');
       process.exit(1);
     }
+
+    const target = parseSetDefaultArgument(rawTarget);
+
+    if (target.kind === 'folder') {
+      try {
+        const previous = config.aiFolder ?? DEFAULT_AI_FOLDER;
+        const folder = setDefaultFolder(config, target.value);
+        saveConfig(config);
+        console.log(`Default A.I. folder set to: ${folder}/`);
+        console.log(`Tools now download to ${folder}/<category>/ instead of ${previous}/<category>/.`);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+      return;
+    }
+
     try {
-      const src = setDefaultSource(config, urlOrLabel);
+      const src = setDefaultSource(config, target.value);
       saveConfig(config);
       const label = src.label || `${src.owner}/${src.repo}`;
       console.log(`Default source set to: ${label}`);
@@ -1043,7 +1125,7 @@ async function main(): Promise<void> {
     // Single flag with no args: interactive/list mode (existing behaviour)
     if (activeFlags.length === 1 && !anyHasArgs) {
       const [flag, category] = activeFlags[0]!;
-      await handleCategoryFlag(category, values.get(flag)!, config, resolveToken(config.enterpriseToken), useSource, tempSource);
+      await handleCategoryFlag(category, values.get(flag)!, config, resolveToken(config.enterpriseToken), useSource, tempSource, downloadOptions);
       return;
     }
 
@@ -1074,7 +1156,7 @@ async function main(): Promise<void> {
       const catItems = filterByCategory(allItems, category);
       for (const name of toolNames) {
         try {
-          await downloadItemsByName(catItems, [name], process.cwd(), token);
+          await downloadItemsByName(catItems, [name], process.cwd(), token, downloadOptions);
         } catch (err) {
           notices.push(err instanceof Error ? err.message : String(err));
         }
@@ -1112,7 +1194,7 @@ async function main(): Promise<void> {
 
   if (process.stdout.isTTY) {
     const initialCategory: ToolCategory | 'all' | null = flags.has('all') ? 'all' : null;
-    await runInteractiveUI(config, initialCategory, sourceOverride);
+    await runInteractiveUI(config, initialCategory, sourceOverride, folderOverride);
   } else {
     // Non-interactive (piped): print all tools
     const token = resolveToken(config.enterpriseToken);

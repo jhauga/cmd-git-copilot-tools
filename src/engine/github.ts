@@ -3,7 +3,9 @@ import type { CopilotItem, GitHubFileEntry, RepositorySource, ToolCategory } fro
 import { ORDERED_CATEGORIES } from '../types.js';
 import { cache, buildCacheKey } from './cache.js';
 
-const USER_AGENT = 'cmd-git-copilot-tools/1.0.0';
+declare const __PKG_VERSION__: string;
+
+const USER_AGENT = `cmd-git-copilot-tools/${__PKG_VERSION__}`;
 const GITHUB_API_VERSION = '2022-11-28';
 const DEFAULT_CACHE_TTL = 10000; // 10 seconds for directory listings
 

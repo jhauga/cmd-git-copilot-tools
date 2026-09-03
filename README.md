@@ -270,10 +270,12 @@ cmd-copilot-tools [options]
 | `--url:<map>=<val> <url>` | Use a temp source with a folder mapping override |
 | `--url:[m=v,...] <url>` | Use a temp source with multiple folder mapping overrides |
 | `--set-default <url\|label>` | Set the default source permanently |
+| `--set-default folder=<path>` | Set the default A.I. folder permanently. Relative paths only |
 | `--remove-source <url\|label>` | Remove a configured source |
 | `--list-source` | List all configured sources |
+| `-f`, `--folder <path>` | Download into `<path>/<category>` for this run, bypassing the configured default. The only place an absolute path is accepted |
 | `--test` | Run all tests (unit + integration) |
-| `--test:<name>` | Run a specific suite: `search`, `config`, `download`, `cli`, `permissions`, `programmatic`, `full` |
+| `--test:<name>` | Run a specific suite: `search`, `config`, `download`, `folder`, `cli`, `permissions`, `programmatic`, `full` |
 | `--test:log` | Run all tests and save log to `logs/` |
 | `--test:<name>:log` | Run specific suite and save log |
 | `--log` | Save test log to `logs/` (requires `--test`) |
@@ -317,7 +319,77 @@ Downloaded files are organized in your current directory as follows:
 
 These folders are created automatically if they don't exist.
 
-> **Note:** Skills, plugins, and hooks are folder-based tools — downloading them copies the entire directory structure to the appropriate `.github/` subfolder.
+> **Note:** Skills, plugins, and hooks are folder-based tools — downloading them copies the entire directory structure to the appropriate subfolder.
+
+### Choosing the A.I. Folder
+
+`.github` is the default *A.I. folder* — the parent directory the category folders are created under. Editors and agents that read their customizations from somewhere else (`.claude`, `.copilot`, or a folder of your own) can be targeted instead.
+
+The A.I. folder is resolved in this order, highest precedence first:
+
+| # | Source | Scope | Absolute paths |
+| --- | --- | --- | --- |
+| 1 | `-f, --folder <path>` | This run only | Accepted |
+| 2 | `aiFolder` on a source | That source, every run | Not accepted |
+| 3 | `--set-default folder=<path>` | Every source, every run | Not accepted |
+| 4 | `.github` | Built-in fallback | — |
+
+```bash
+# Change the saved default: tools now land in .claude/<category>/
+cmd-copilot-tools --set-default folder=.claude
+
+# One run only — the saved default is bypassed, not changed
+cmd-copilot-tools --folder .copilot --skill my-skill
+cmd-copilot-tools -f docs/ai --agent my-agent
+
+# Absolute paths are accepted only by -f, --folder
+cmd-copilot-tools --folder "C:\Users\demo-user\ai" --prompt my-prompt
+cmd-copilot-tools --folder /opt/ai --prompt my-prompt
+```
+
+The category layout is unchanged — only the parent folder moves:
+
+```text
+.claude/
+  agents/
+  cookbook/
+  hooks/
+  instructions/
+  plugins/
+  prompts/
+  skills/
+  workflows/
+```
+
+#### Why the saved default rejects absolute paths
+
+`--set-default folder=<path>` is written to the config file and applies to every future run in every repository you work in. An absolute path there would pin every download to one machine-specific location, so it is refused:
+
+```console
+$ cmd-copilot-tools --set-default folder=/opt/ai
+Absolute path '/opt/ai' is not allowed when setting the default A.I. folder. The default
+must be relative to the download directory (example: --set-default folder=.claude). To
+download to an absolute path for a single run, use: --folder "/opt/ai"
+```
+
+Windows drive paths (`C:\ai`), UNC shares (`\\server\share`), and home-anchored paths (`~/ai`) are rejected the same way, on every platform.
+
+#### Per-source A.I. folders
+
+A source that should always download somewhere specific carries its own `aiFolder` in the config file. It overrides the saved default, and `--folder` still overrides it:
+
+```json
+{
+  "sources": [
+    {
+      "owner": "acme-corp",
+      "repo": "copilot-tools",
+      "label": "acme",
+      "aiFolder": ".claude"
+    }
+  ]
+}
+```
 
 ## Managing Sources
 
@@ -360,6 +432,9 @@ cmd-copilot-tools --source:instructions="custom/path" https://github.com/owner/r
 
 # Set a source as the permanent default
 cmd-copilot-tools --set-default myrepo
+
+# Set the permanent default A.I. folder (the qualifier must be exactly "folder=")
+cmd-copilot-tools --set-default folder=.claude
 
 # List all configured sources
 cmd-copilot-tools --list-source

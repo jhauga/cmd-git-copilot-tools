@@ -18,6 +18,8 @@ export {
   CATEGORY_DISPLAY,
   ORDERED_CATEGORIES,
   DOWNLOAD_PATHS,
+  DEFAULT_AI_FOLDER,
+  AbsoluteFolderPathError,
   ToolNotFoundError,
   SourceNotFoundError,
   InvalidUrlError,
@@ -32,6 +34,7 @@ export {
   addSource,
   removeSource,
   setDefaultSource,
+  setDefaultFolder,
   findSource,
   listSources,
   parseGitHubUrl,
@@ -54,6 +57,7 @@ export {
 } from './engine/github.js';
 
 // Export download functions
+export type { DownloadOptions } from './engine/download.js';
 export {
   downloadItem,
   downloadItemsByName,
@@ -61,6 +65,15 @@ export {
   matchesToolName,
   getFileSizeDisplay,
 } from './engine/download.js';
+
+// Export A.I. folder resolution helpers
+export type { AiFolderContext } from './engine/folder.js';
+export {
+  isAbsolutePath,
+  normalizeAiFolder,
+  resolveAiFolder,
+  resolveCategoryDir,
+} from './engine/folder.js';
 
 // Export search and filter functions
 export {

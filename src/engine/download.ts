@@ -2,8 +2,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import type { CopilotItem, DownloadMetadata, GitHubFileEntry, RepositorySource } from '../types.js';
-import { DOWNLOAD_PATHS } from '../types.js';
+import { resolveAiFolder, resolveCategoryDir } from './folder.js';
 import { getDirectoryContents, getFileContent } from './github.js';
+
+export interface DownloadOptions {
+  /** `-f, --folder` value. Bypasses the source and config defaults. */
+  folderOverride?: string;
+  /** Config-level default A.I. folder (`--set-default folder=<path>`). */
+  configFolder?: string;
+}
 
 function ensureDir(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
@@ -49,10 +56,15 @@ async function downloadDirectory(
 export async function downloadItem(
   item: CopilotItem,
   destDir: string,
-  token?: string
+  token?: string,
+  options: DownloadOptions = {}
 ): Promise<DownloadMetadata> {
-  const categoryPath = DOWNLOAD_PATHS[item.category];
-  const targetBase = path.join(destDir, categoryPath);
+  const aiFolder = resolveAiFolder({
+    cliFolder: options.folderOverride,
+    source: item.repo,
+    config: { aiFolder: options.configFolder },
+  });
+  const targetBase = resolveCategoryDir(destDir, item.category, aiFolder);
 
   let localPath: string;
   let contentForHash: string;
@@ -103,7 +115,8 @@ export async function downloadItemsByName(
   items: CopilotItem[],
   names: string[],
   destDir: string,
-  token?: string
+  token?: string,
+  options: DownloadOptions = {}
 ): Promise<DownloadMetadata[]> {
   const results: DownloadMetadata[] = [];
 
@@ -122,7 +135,7 @@ export async function downloadItemsByName(
     });
 
     for (const match of unique) {
-      const meta = await downloadItem(match, destDir, token);
+      const meta = await downloadItem(match, destDir, token, options);
       results.push(meta);
       console.log(`Downloaded: ${match.name} → ${meta.localPath}`);
     }

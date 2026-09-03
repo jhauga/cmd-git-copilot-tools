@@ -41,6 +41,7 @@ interface UIState {
   inputBuffer: string;
   sources: RepositorySource[];
   sourceDisplay?: SourceDisplayInfo;
+  folderOverride?: string;
 }
 
 function write(text: string): void {
@@ -130,7 +131,10 @@ async function handleDownload(state: UIState, code: string, config: Config): Pro
   clearAndRender(state);
 
   try {
-    const meta = await downloadItem(item, process.cwd(), token);
+    const meta = await downloadItem(item, process.cwd(), token, {
+      folderOverride: state.folderOverride,
+      configFolder: config.aiFolder,
+    });
     state.statusMessage = renderDownloadSuccess(item.name, meta.localPath);
   } catch (err) {
     state.statusMessage = renderError(err instanceof Error ? err.message : String(err));
@@ -140,7 +144,8 @@ async function handleDownload(state: UIState, code: string, config: Config): Pro
 export async function runInteractiveUI(
   config: Config,
   initialCategory: ToolCategory | 'all' | null = null,
-  sourceOverride?: { sources: RepositorySource[]; display?: SourceDisplayInfo }
+  sourceOverride?: { sources: RepositorySource[]; display?: SourceDisplayInfo },
+  folderOverride?: string
 ): Promise<void> {
   setupReadline();
 
@@ -157,6 +162,7 @@ export async function runInteractiveUI(
     inputBuffer: '',
     sources: activeSources,
     sourceDisplay: sourceOverride?.display,
+    folderOverride,
   };
 
   // Show loading and fetch tools

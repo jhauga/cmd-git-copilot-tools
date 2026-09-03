@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { Config, RepositorySource } from '../types.js';
+import { AbsoluteFolderPathError, DEFAULT_AI_FOLDER, MissingArgumentError } from '../types.js';
+import { isAbsolutePath, normalizeAiFolder } from './folder.js';
 
 const APP_NAME = 'cmd-git-copilot-tools';
 
@@ -171,6 +173,33 @@ export function removeSource(config: Config, urlOrLabel: string): RepositorySour
   return removed;
 }
 
+/**
+ * Set the config-level default A.I. folder (`--set-default folder=<path>`).
+ *
+ * The stored default must stay relative to the download directory: it applies
+ * to every future run in every repository, so an absolute path would pin all
+ * downloads to one machine-specific location. Per-run absolute paths go through
+ * the `-f, --folder` option instead.
+ */
+export function setDefaultFolder(config: Config, folderValue: string): string {
+  const value = folderValue.trim();
+
+  if (value === '') {
+    throw new MissingArgumentError(
+      '--set-default folder=',
+      'a folder path (example: --set-default folder=.claude)'
+    );
+  }
+
+  if (isAbsolutePath(value)) {
+    throw new AbsoluteFolderPathError(value);
+  }
+
+  const normalized = normalizeAiFolder(value);
+  config.aiFolder = normalized;
+  return normalized;
+}
+
 export function setDefaultSource(config: Config, urlOrLabel: string): RepositorySource {
   const source = findSource(config, urlOrLabel);
   if (!source) {
@@ -195,8 +224,11 @@ export function listSources(config: Config): void {
     const url = s.baseUrl
       ? `${s.baseUrl}/${s.owner}/${s.repo}`
       : `https://github.com/${s.owner}/${s.repo}`;
-    console.log(`  ${i + 1}. ${url}${label}${defaultMark}`);
+    const folder = s.aiFolder ? `  → ${normalizeAiFolder(s.aiFolder)}/` : '';
+    console.log(`  ${i + 1}. ${url}${label}${defaultMark}${folder}`);
   });
+  console.log(`
+Default A.I. folder: ${config.aiFolder ? normalizeAiFolder(config.aiFolder) : DEFAULT_AI_FOLDER}/`);
   console.log('');
 }
 

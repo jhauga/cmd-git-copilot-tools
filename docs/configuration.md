@@ -41,6 +41,7 @@ An array of GitHub repository sources to browse content from. Each entry is an o
 | `baseUrl` | `string` | No | GitHub Enterprise Server base URL (e.g., `https://github.example.com`) |
 | `branch` | `string` | No | Branch, tag, or commit SHA to read content from |
 | `folderMappings` | `object` | No | Custom folder-to-category mappings (see below) |
+| `aiFolder` | `string` | No | A.I. folder this source downloads into (see [`aiFolder`](#aifolder)). Relative paths only |
 
 #### `folderMappings`
 
@@ -161,6 +162,63 @@ Index of the default source in the `sources` array (zero-based). Managed automat
 
 ---
 
+### `aiFolder`
+
+**Type:** `string`
+**Default:** `".github"`
+
+The *A.I. folder*: the parent directory that category folders are created under when content is downloaded. Set it to target an editor or agent that reads its customizations from somewhere other than `.github`, such as `.claude` or `.copilot`.
+
+```json
+{
+  "aiFolder": ".claude"
+}
+```
+
+Managed by `--set-default folder=<path>`:
+
+```bash
+cmd-copilot-tools --set-default folder=.claude
+```
+
+```text
+Default A.I. folder set to: .claude/
+Tools now download to .claude/<category>/ instead of .github/<category>/.
+```
+
+`aiFolder` may also be set on an individual source, where it overrides this config-level value for that source only:
+
+```json
+{
+  "aiFolder": ".claude",
+  "sources": [
+    {
+      "owner": "acme-corp",
+      "repo": "copilot-tools",
+      "label": "acme",
+      "aiFolder": "docs/ai"
+    }
+  ]
+}
+```
+
+With the config above, tools from the `acme` source download to `docs/ai/<category>/` and tools from every other source download to `.claude/<category>/`.
+
+**Resolution order**, highest precedence first:
+
+| # | Source of the value | Scope | Absolute paths |
+| --- | --- | --- | --- |
+| 1 | `-f, --folder <path>` | This run only | Accepted |
+| 2 | `aiFolder` on a source | That source, every run | Not accepted |
+| 3 | `aiFolder` on the config | Every source, every run | Not accepted |
+| 4 | `.github` | Built-in fallback | — |
+
+Values are normalized before they are stored: surrounding whitespace and trailing separators are removed, so `" .claude/ "` is saved as `.claude`.
+
+> **Note:** Both stored forms of `aiFolder` must be relative to the download directory. See [Absolute paths](#absolute-paths) below.
+
+---
+
 ### `enterpriseToken`
 
 **Type:** `string`
@@ -241,18 +299,95 @@ cmd-copilot-tools
 
 ## Download Folder Structure
 
-Downloaded content is saved to the current directory under the following paths:
+Downloaded content is saved to the current directory under the following paths, where `<ai-folder>` defaults to `.github`:
 
 | Category | Local Path |
 | --- | --- |
-| Agents | `.github/agents` |
-| Instructions | `.github/instructions` |
-| Plugins | `.github/plugins` |
-| Prompts | `.github/prompts` |
-| Skills | `.github/skills` |
-| Workflows | `.github/workflows` |
+| Agents | `<ai-folder>/agents` |
+| Cookbook | `<ai-folder>/cookbook` |
+| Hooks | `<ai-folder>/hooks` |
+| Instructions | `<ai-folder>/instructions` |
+| Plugins | `<ai-folder>/plugins` |
+| Prompts | `<ai-folder>/prompts` |
+| Skills | `<ai-folder>/skills` |
+| Workflows | `<ai-folder>/workflows` |
 
-Folders are created automatically if they do not exist. The local save paths are fixed regardless of any custom `folderMappings` configured for the source repository. `folderMappings` only controls where content is fetched *from*, not where it is saved.
+Folders are created automatically if they do not exist. The category subfolder names are fixed regardless of any custom `folderMappings` configured for the source repository. `folderMappings` only controls where content is fetched *from*, not where it is saved.
+
+Only the parent folder is configurable, through [`aiFolder`](#aifolder) or the `-f, --folder` option.
+
+---
+
+## A.I. Folder Commands
+
+| Command | Description |
+| --- | --- |
+| `--set-default folder=<path>` | Save `<path>` as the default A.I. folder. Relative paths only |
+| `-f, --folder <path>` | Download into `<path>/<category>` for this run only. Accepts absolute paths |
+
+### `--set-default folder=<path>`
+
+`--set-default` reads its argument as an A.I. folder only when the argument begins with the exact qualifier `folder=`. Every other argument keeps the option's original meaning and sets the default download source.
+
+| Command | Interpreted as |
+| --- | --- |
+| `--set-default folder=.claude` | Set the default A.I. folder to `.claude` |
+| `--set-default myrepo` | Set the default source to the `myrepo` source |
+| `--set-default folder` | Set the default source to a source labelled `folder` |
+| `--set-default folders=.claude` | Set the default source (`folders=` is not the qualifier) |
+| `--set-default Folder=.claude` | Set the default source (the qualifier is case-sensitive) |
+
+```bash
+# Changes the default source repo to download from
+cmd-copilot-tools --set-default myrepo
+
+# Now .claude/ is default and not .github/
+cmd-copilot-tools --set-default folder=.claude
+```
+
+### `-f, --folder <path>`
+
+Overrides the A.I. folder for a single run without changing anything on disk. It takes precedence over an `aiFolder` set on the source and over the saved config default.
+
+```bash
+cmd-copilot-tools --folder .copilot --skill my-skill
+cmd-copilot-tools -f docs/ai --agent my-agent
+```
+
+The option also works with the interactive browser, where every download made during the session goes to the given folder:
+
+```bash
+cmd-copilot-tools --folder .claude
+```
+
+### Absolute paths
+
+An absolute path is accepted **only** by `-f, --folder`:
+
+```bash
+cmd-copilot-tools --folder "C:\Users\demo-user\ai" --prompt my-prompt
+cmd-copilot-tools --folder /opt/ai --prompt my-prompt
+```
+
+A stored default applies to every future run in every repository, so an absolute path passed to `--set-default folder=` is refused with a dedicated error rather than saved:
+
+```console
+$ cmd-copilot-tools --set-default folder=/opt/ai
+Absolute path '/opt/ai' is not allowed when setting the default A.I. folder. The default
+must be relative to the download directory (example: --set-default folder=.claude). To
+download to an absolute path for a single run, use: --folder "/opt/ai"
+```
+
+The same rule applies to an `aiFolder` written directly into the config file. All of these forms count as absolute, on every platform:
+
+| Form | Example |
+| --- | --- |
+| POSIX root | `/opt/ai` |
+| Windows drive | `C:\ai`, `c:/ai`, `D:ai` |
+| UNC share | `\\server\share\ai` |
+| Home-anchored | `~`, `~/ai` |
+
+Detection does not depend on the host platform: a Windows path is rejected on Linux and a POSIX path is rejected on Windows, so a config file shared between machines behaves the same way everywhere.
 
 ---
 
@@ -314,6 +449,7 @@ Then edit your config:
 | `--url:<map>=<val> <url>` | Use a temp source with a folder mapping override |
 | `--url:[m=v,...] <url>` | Use a temp source with multiple folder mapping overrides |
 | `--set-default <url\|label>` | Set the default source permanently |
+| `--set-default folder=<path>` | Set the default A.I. folder permanently (see [A.I. Folder Commands](#ai-folder-commands)) |
 | `--remove-source <url\|label>` | Remove a source |
 | `--list-source` | List all configured sources (displays numbered list) |
 
