@@ -11,7 +11,7 @@ import { renderSearchSourceHeader } from './ui/renderer.js';
 import { readConfirm, readLine, readAuthPermission } from './ui/input.js';
 import { loadPermissions, savePermissions } from './engine/permissions.js';
 import type { PermissionState } from './engine/permissions.js';
-import type { ToolCategory, RepositorySource, Config, FolderMappings } from './types.js';
+import type { ToolCategory, RepositorySource, Config, FolderMappings, FolderMappingValue } from './types.js';
 import { CATEGORY_LABELS, ORDERED_CATEGORIES, CATEGORY_DISPLAY, DEFAULT_AI_FOLDER, SourceNotFoundError } from './types.js';
 import { printSuiteResult, printSummary, logResults } from './test/runner.js';
 import type { SuiteResult } from './test/runner.js';
@@ -22,6 +22,7 @@ import { runCliSuite } from './test/unit/cli.js';
 import { runPermissionsSuite } from './test/unit/permissions.js';
 import { runProgrammaticSuite } from './test/unit/programmatic.js';
 import { runFolderSuite } from './test/unit/folder.js';
+import { runMappingSuite } from './test/unit/mapping.js';
 import { runFullTest } from './test/full.js';
 
 // Load version from package.json
@@ -57,6 +58,11 @@ OPTIONS:
   --skill [name[,...]]          Show skills, or download named skill(s)
   --workflow [name[,...]]       Show workflows, or download named workflow(s)
 
+                                When a source maps a tool type to an array of
+                                folders, a name is looked up in each folder in
+                                order (first match wins), and folder/name
+                                downloads from that folder only (./name = root)
+
   --search <term>[,term...]     Search across all tool categories (non-interactive)
 
   --source <url> [label]        Add a GitHub repository as a source
@@ -81,7 +87,7 @@ OPTIONS:
                                 The only place an absolute path is accepted.
 
   --test                        Run all tests (unit + integration)
-  --test:<name>                 Run a specific test suite (search, config, download, folder, cli, permissions, programmatic, full)
+  --test:<name>                 Run a specific test suite (search, config, download, folder, mapping, cli, permissions, programmatic, full)
   --test:log                    Run all tests and save results to logs/ folder
   --test:<name>:log             Run specific suite and save results to logs/ folder
   --log                         Save test results to logs/ (requires --test)
@@ -117,6 +123,8 @@ EXAMPLES:
   cmd-copilot-tools --url:skills=root https://github.com/owner/repo --skill my-skill
   cmd-copilot-tools --url:plugins="custom/path" https://github.com/owner/repo --plugin my-plugin
   cmd-copilot-tools --url:[plugins="path",instructions="path"] https://github.com/owner/repo
+  cmd-copilot-tools --url:skills=[web,data,.] https://github.com/owner/repo --skill my-skill
+  cmd-copilot-tools --use myrepo --skill web/my-skill,other-skill,data/third-skill
   cmd-copilot-tools --source:skills=root https://github.com/owner/repo
   cmd-copilot-tools --source:instructions="custom/path" https://github.com/owner/repo tool
   cmd-copilot-tools --list-source
@@ -182,14 +190,15 @@ const VALID_MAPPING_CATEGORIES = new Set<string>([
 ]);
 
 /**
- * Split comma-separated mapping entries, respecting quoted values.
- * Example: 'plugins="custom/path",instructions="other"' → ['plugins="custom/path"', 'instructions="other"']
+ * Split comma-separated mapping entries, respecting quoted values and nested brackets.
+ * Example: 'plugins="custom/path",skills=[web,data]' → ['plugins="custom/path"', 'skills=[web,data]']
  */
 function splitMappingEntries(input: string): string[] {
   const entries: string[] = [];
   let current = '';
   let inQuote = false;
   let quoteChar = '';
+  let depth = 0;
 
   for (const ch of input) {
     if (!inQuote && (ch === '"' || ch === "'")) {
@@ -199,7 +208,13 @@ function splitMappingEntries(input: string): string[] {
     } else if (inQuote && ch === quoteChar) {
       inQuote = false;
       current += ch;
-    } else if (!inQuote && ch === ',') {
+    } else if (!inQuote && ch === '[') {
+      depth++;
+      current += ch;
+    } else if (!inQuote && ch === ']') {
+      depth = Math.max(0, depth - 1);
+      current += ch;
+    } else if (!inQuote && depth === 0 && ch === ',') {
       if (current.trim()) {entries.push(current.trim());}
       current = '';
     } else {
@@ -210,22 +225,33 @@ function splitMappingEntries(input: string): string[] {
   return entries;
 }
 
+function stripQuotes(value: string): string {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
 /**
- * Parse a single mapping entry like "skills=root" or "plugins=\"custom/path\"" or "agents=null".
+ * Parse a single mapping entry like "skills=root", "plugins=\"custom/path\"",
+ * "agents=null", or "skills=[web,data,.]" (an array of folders).
  */
-function parseMappingEntry(entry: string): { category: ToolCategory; value: string | null } | null {
+function parseMappingEntry(entry: string): { category: ToolCategory; value: FolderMappingValue } | null {
   const eqIndex = entry.indexOf('=');
   if (eqIndex === -1) {return null;}
 
   const category = entry.substring(0, eqIndex).trim();
-  let value = entry.substring(eqIndex + 1).trim();
+  const rawValue = entry.substring(eqIndex + 1).trim();
 
   if (!VALID_MAPPING_CATEGORIES.has(category)) {return null;}
 
-  // Strip surrounding quotes
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    value = value.slice(1, -1);
+  if (rawValue.startsWith('[') && rawValue.endsWith(']')) {
+    const folders = splitMappingEntries(rawValue.slice(1, -1)).map(stripQuotes);
+    if (folders.length === 0) {return null;}
+    return { category: category as ToolCategory, value: folders };
   }
+
+  const value = stripQuotes(rawValue);
 
   if (value === 'null') {return { category: category as ToolCategory, value: null };}
   if (value === 'root') {return { category: category as ToolCategory, value: 'root' };}
@@ -239,7 +265,7 @@ function parseMappingEntry(entry: string): { category: ToolCategory; value: stri
  * When any value is "root", all other categories are set to null.
  * When values are custom paths, only the specified categories are set.
  */
-function buildFolderMappingsFromEntries(entries: Array<{ category: ToolCategory; value: string | null }>): FolderMappings {
+function buildFolderMappingsFromEntries(entries: Array<{ category: ToolCategory; value: FolderMappingValue }>): FolderMappings {
   const hasRoot = entries.some(e => e.value === 'root');
 
   if (hasRoot) {
@@ -270,6 +296,7 @@ function buildFolderMappingsFromEntries(entries: Array<{ category: ToolCategory;
  *
  * Single mapping:   --url:skills=root          --source:plugins="custom/path"
  * Multiple mappings: --url:[skills=root,plugins="path"]  --source:[a=null,p="path"]
+ * Array of folders:  --url:skills=[web,data,.]  --source:[skills=[web,data],agents=null]
  *
  * Returns the flag name ('url' or 'source') and parsed FolderMappings, or null if invalid.
  */
@@ -280,7 +307,7 @@ export function parseConfigArgument(arg: string): { flag: string; mappings: Fold
   const flag = match[1]!;
   const configPart = match[2]!;
 
-  let entries: Array<{ category: ToolCategory; value: string | null }>;
+  let entries: Array<{ category: ToolCategory; value: FolderMappingValue }>;
 
   if (configPart.startsWith('[') && configPart.endsWith(']')) {
     const inner = configPart.slice(1, -1);
@@ -395,8 +422,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       if (!parsed) {
         console.error(`Invalid config argument: ${arg}`);
         console.error('Expected: --url:<category>=<value> or --source:[<cat>=<val>,...]');
-        console.error('Valid categories: agents, instructions, plugins, prompts, skills, workflows');
-        console.error('Valid values: a folder path, "root", or "null"');
+        console.error('Valid categories: agents, hooks, instructions, plugins, prompts, skills, workflows');
+        console.error('Valid values: a folder path, "root", "null", or an array of folders like [folder-a,folder-b,.]');
         process.exit(1);
       }
       configArgs.set(parsed.flag, parsed.mappings);
@@ -624,6 +651,8 @@ async function handleSourceAdd(config: ReturnType<typeof loadConfig>, vals: stri
           dirs.forEach(d => console.log(`  - ${d.name}`));
           console.log('\nEdit the config file to set folderMappings:');
           console.log(`  ${getConfigPath()}`);
+          console.log('\nA tool type maps to one folder ("skills": "path") or to several');
+          console.log('searched in order ("skills": ["folder-a", "folder-b", "."]).');
         }
       } catch {
         // Ignore errors fetching root
@@ -698,7 +727,7 @@ async function handleCategoryFlag(
   }
 }
 
-const KNOWN_UNIT_TESTS = ['search', 'config', 'download', 'folder', 'cli', 'permissions', 'programmatic', 'full'];
+const KNOWN_UNIT_TESTS = ['search', 'config', 'download', 'folder', 'mapping', 'cli', 'permissions', 'programmatic', 'full'];
 
 async function runTests(unitName: string | undefined, doLog: boolean): Promise<void> {
   const suites: SuiteResult[] = [];
@@ -709,6 +738,7 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
     suites.push(await runConfigSuite());
     suites.push(await runDownloadSuite());
     suites.push(await runFolderSuite());
+    suites.push(await runMappingSuite());
     suites.push(await runCliSuite());
     suites.push(await runPermissionsSuite());
     suites.push(await runProgrammaticSuite());
@@ -721,6 +751,8 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
     suites.push(await runDownloadSuite());
   } else if (unitName === 'folder') {
     suites.push(await runFolderSuite());
+  } else if (unitName === 'mapping') {
+    suites.push(await runMappingSuite());
   } else if (unitName === 'cli') {
     suites.push(await runCliSuite());
   } else if (unitName === 'permissions') {

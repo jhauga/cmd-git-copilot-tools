@@ -2,8 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import type { CopilotItem, DownloadMetadata, GitHubFileEntry, RepositorySource } from '../types.js';
+import { MappedToolNotFoundError } from '../types.js';
 import { resolveAiFolder, resolveCategoryDir } from './folder.js';
 import { getDirectoryContents, getFileContent } from './github.js';
+import { formatToolReference, getItemDisplayName, getItemFolder, parseToolReference } from './mapping.js';
 
 export interface DownloadOptions {
   /** `-f, --folder` value. Bypasses the source and config defaults. */
@@ -111,6 +113,57 @@ export function matchesToolName(itemName: string, rawName: string): boolean {
   );
 }
 
+/** Folders of array-mapped items, in the order they were listed. */
+function listMappedFolders(items: CopilotItem[]): string[] {
+  const folders: string[] = [];
+  for (const item of items) {
+    if (item.mappedFolder !== undefined && !folders.includes(item.mappedFolder)) {
+      folders.push(item.mappedFolder);
+    }
+  }
+  return folders;
+}
+
+/**
+ * Resolve one requested name to the items it downloads.
+ *
+ *   - `name`         matches the tool in any folder. Items are listed in folder
+ *                    mapping order, so for a tool type mapped to an array of
+ *                    folders the first folder that holds the tool wins.
+ *   - `folder/name`  matches the tool only in that folder (`./name` for the
+ *                    repository root).
+ *
+ * One item is returned per distinct tool name. Throws when nothing matches.
+ */
+export function resolveItemsByName(items: CopilotItem[], rawName: string): CopilotItem[] {
+  const ref = parseToolReference(rawName);
+  if (ref.name === '') {
+    throw new Error(`'${rawName}' is missing a tool name after the folder.`);
+  }
+
+  const byName = items.filter(item => matchesToolName(item.name, ref.name));
+  const requestedFolder = ref.folder?.toLowerCase();
+  const matching = requestedFolder === undefined
+    ? byName
+    : byName.filter(item => getItemFolder(item).toLowerCase() === requestedFolder);
+
+  if (matching.length === 0) {
+    const searched = listMappedFolders(items);
+    if (ref.folder === undefined && searched.length === 0) {
+      throw new Error(`Tool '${rawName}' not found. Use --search to find available tools.`);
+    }
+    const foundIn = Array.from(new Set(byName.map(item => formatToolReference(getItemFolder(item), item.name))));
+    throw new MappedToolNotFoundError(ref.name, searched, ref.folder, foundIn);
+  }
+
+  const seen = new Set<string>();
+  return matching.filter(item => {
+    if (seen.has(item.name)) { return false; }
+    seen.add(item.name);
+    return true;
+  });
+}
+
 export async function downloadItemsByName(
   items: CopilotItem[],
   names: string[],
@@ -121,23 +174,10 @@ export async function downloadItemsByName(
   const results: DownloadMetadata[] = [];
 
   for (const rawName of names) {
-    const matching = items.filter(item => matchesToolName(item.name, rawName));
-
-    if (matching.length === 0) {
-      throw new Error(`Tool '${rawName}' not found. Use --search to find available tools.`);
-    }
-
-    const seen = new Set<string>();
-    const unique = matching.filter(item => {
-      if (seen.has(item.name)) { return false; }
-      seen.add(item.name);
-      return true;
-    });
-
-    for (const match of unique) {
+    for (const match of resolveItemsByName(items, rawName)) {
       const meta = await downloadItem(match, destDir, token, options);
       results.push(meta);
-      console.log(`Downloaded: ${match.name} → ${meta.localPath}`);
+      console.log(`Downloaded: ${getItemDisplayName(match)} → ${meta.localPath}`);
     }
   }
 

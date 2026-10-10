@@ -310,6 +310,31 @@ export async function runCliSuite(): Promise<SuiteResult> {
       assertEqual(result, null, 'empty brackets should return null');
     },
 
+    'parseConfigArgument: single mapping with an array of folders': () => {
+      const result = parseConfigArgument('--url:skills=[web,data,.]');
+      assert(result !== null, 'should parse array mapping');
+      assertDeepEqual(result!.mappings.skills, ['web', 'data', '.']);
+      assertEqual(result!.mappings.agents, undefined, 'array mapping does not null other categories');
+    },
+
+    'parseConfigArgument: array of quoted folders': () => {
+      const result = parseConfigArgument('--source:skills=["web/tools","/"]');
+      assert(result !== null, 'should parse quoted array entries');
+      assertDeepEqual(result!.mappings.skills, ['web/tools', '/']);
+    },
+
+    'parseConfigArgument: array mapping inside bracket syntax': () => {
+      const result = parseConfigArgument('--source:[skills=[web,data],agents=null,prompts="custom"]');
+      assert(result !== null, 'should parse nested brackets');
+      assertDeepEqual(result!.mappings.skills, ['web', 'data']);
+      assertEqual(result!.mappings.agents, null);
+      assertEqual(result!.mappings.prompts, 'custom');
+    },
+
+    'parseConfigArgument: empty folder array returns null': () => {
+      assertEqual(parseConfigArgument('--url:skills=[]'), null, 'empty array should return null');
+    },
+
     // --- SourceNotFoundError tests ---
 
     'SourceNotFoundError: has correct name and message for label': () => {

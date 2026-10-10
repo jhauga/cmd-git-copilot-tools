@@ -1,6 +1,7 @@
 import type { CopilotItem, RepositorySource, ToolCategory } from '../types.js';
 import { CATEGORY_DISPLAY, ORDERED_CATEGORIES } from '../types.js';
 import { filterByCategory } from '../engine/search.js';
+import { getItemDisplayName } from '../engine/mapping.js';
 
 // ANSI escape codes
 const ESC = '\x1b';
@@ -71,7 +72,7 @@ export function renderExpandedItems(
       allLines.push('');
       allLines.push(bold(`[${label}] ${title}:`));
       catItems.forEach((item, idx) => {
-        allLines.push(`      ${String(idx + 1).padStart(2, ' ')}  ${item.name}`);
+        allLines.push(`      ${String(idx + 1).padStart(2, ' ')}  ${getItemDisplayName(item)}`);
       });
     }
   } else {
@@ -80,7 +81,7 @@ export function renderExpandedItems(
     allLines.push('');
     allLines.push(bold(`[${label}] ${title}:`));
     catItems.forEach((item, idx) => {
-      allLines.push(`      ${String(idx + 1).padStart(2, ' ')}  ${item.name}`);
+      allLines.push(`      ${String(idx + 1).padStart(2, ' ')}  ${getItemDisplayName(item)}`);
     });
   }
 
@@ -144,7 +145,7 @@ export function renderSearchResults(
     lines.push('');
     lines.push(bold(`[${label}] ${title}:`));
     catItems.forEach((item, idx) => {
-      lines.push(`      ${String(idx + 1).padStart(2, ' ')}  ${item.name}`);
+      lines.push(`      ${String(idx + 1).padStart(2, ' ')}  ${getItemDisplayName(item)}`);
     });
   }
 

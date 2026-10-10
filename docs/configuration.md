@@ -51,17 +51,18 @@ Each property in `folderMappings` corresponds to a content category:
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `agents` | `string \| null` | Path to agents content, `"root"`, or `null` to exclude |
-| `hooks` | `string \| null` | Path to hooks content, `"root"`, or `null` to exclude |
-| `instructions` | `string \| null` | Path to instructions content, `"root"`, or `null` to exclude |
-| `plugins` | `string \| null` | Path to plugins content, `"root"`, or `null` to exclude |
-| `prompts` | `string \| null` | Path to prompts content, `"root"`, or `null` to exclude |
-| `skills` | `string \| null` | Path to skills content, `"root"`, or `null` to exclude |
-| `workflows` | `string \| null` | Path to workflows content, `"root"`, or `null` to exclude |
+| `agents` | `string \| string[] \| null` | Path to agents content, an array of folders, `"root"`, or `null` to exclude |
+| `hooks` | `string \| string[] \| null` | Path to hooks content, an array of folders, `"root"`, or `null` to exclude |
+| `instructions` | `string \| string[] \| null` | Path to instructions content, an array of folders, `"root"`, or `null` to exclude |
+| `plugins` | `string \| string[] \| null` | Path to plugins content, an array of folders, `"root"`, or `null` to exclude |
+| `prompts` | `string \| string[] \| null` | Path to prompts content, an array of folders, `"root"`, or `null` to exclude |
+| `skills` | `string \| string[] \| null` | Path to skills content, an array of folders, `"root"`, or `null` to exclude |
+| `workflows` | `string \| string[] \| null` | Path to workflows content, an array of folders, `"root"`, or `null` to exclude |
 
 **Special values:**
 
 - `"root"` - The entire repository root is treated as the source for this category. When any category is set to `root`, all other categories are effectively disabled.
+- `["folder-a", "folder-b"]` - The category is spread across several folders, searched in the order listed. See [Array mappings](#array-mappings).
 - `null` - The category is excluded entirely.
 - *(omitted)* - Uses the default path (the category name).
 
@@ -112,6 +113,59 @@ Each property in `folderMappings` corresponds to a content category:
     }
   ]
 }
+```
+
+**Example: Repository that groups skills into several folders**
+
+```json
+{
+  "sources": [
+    {
+      "owner": "acme-corp",
+      "repo": "copilot-skills",
+      "label": "acme",
+      "folderMappings": {
+        "agents": null,
+        "instructions": null,
+        "plugins": null,
+        "prompts": null,
+        "skills": ["frontend", "backend", "testing"],
+        "workflows": null
+      }
+    }
+  ]
+}
+```
+
+#### Array mappings
+
+An array maps one category to several folders in the source repository. It works for every category, not only skills.
+
+| Entry | Meaning |
+| --- | --- |
+| `"frontend"` | A folder relative to the repository root. Nested paths such as `"tools/frontend"` also work |
+| `"."` or `"/"` | The repository root itself |
+
+- **Listing** - Every folder is listed, in the order given. Each tool is shown with its folder, such as `frontend/my-skill`, and that text can be passed straight back to a download option.
+- **Root entries** - When the array includes `"."` or `"/"`, the other folders in the same array are not listed as tools from the root.
+- **Download location** - The folder is only where a tool is read *from*. Every tool still downloads flat into `<ai-folder>/<category>/<name>`.
+- **Empty array** - `[]` lists nothing, the same as `null`.
+
+With the config above, a download name is resolved like this:
+
+| Command | Result |
+| --- | --- |
+| `--use acme --skill my-skill` | Looks in `frontend`, then `backend`, then `testing`. The first folder that has `my-skill` wins |
+| `--use acme --skill backend/my-skill` | Downloads `my-skill` from `backend` only |
+| `--use acme --skill frontend/my-skill,other-skill,testing/third-skill` | Resolves each name on its own, in the order given |
+| `--use acme --skill ./my-skill` | Downloads `my-skill` from the repository root only (needs `"."` or `"/"` in the array) |
+
+A name that is not found is reported once the other names have downloaded:
+
+```text
+Notices:
+  Tool 'my-skill' not found in folder 'testing'. Found as: frontend/my-skill
+  Tool 'missing-skill' not found in any mapped folder (searched: frontend, backend, testing). Use --search to find available tools.
 ```
 
 **Example: GitHub Enterprise repository**
@@ -503,6 +557,14 @@ cmd-copilot-tools --url:plugins="custom/path" https://github.com/owner/repo --pl
 # Result: folderMappings = {plugins: "custom/path", instructions: "other/path"}
 cmd-copilot-tools --url:[plugins="custom/path",instructions="other/path"] https://github.com/owner/repo
 
+# Map a category to an array of folders (searched in order; "." is the root)
+# Result: folderMappings = {skills: ["frontend", "backend", "."]}
+cmd-copilot-tools --url:skills=[frontend,backend,.] https://github.com/owner/repo --skill my-skill
+
+# Arrays also work inside bracket syntax
+# Result: folderMappings = {skills: ["frontend", "backend"], agents: null}
+cmd-copilot-tools --url:[skills=[frontend,backend],agents=null] https://github.com/owner/repo
+
 # Save a source with folder mappings (--source persists to config)
 cmd-copilot-tools --source:skills=root https://github.com/owner/repo
 cmd-copilot-tools --source:instructions="custom/path" https://github.com/owner/repo tool
@@ -520,7 +582,7 @@ cmd-copilot-tools --source:[plugins="custom/path",instructions="other/path"] htt
 
 #### Valid categories
 
-`agents`, `instructions`, `plugins`, `prompts`, `skills`, `workflows`
+`agents`, `hooks`, `instructions`, `plugins`, `prompts`, `skills`, `workflows`
 
 #### Valid values
 
@@ -529,3 +591,6 @@ cmd-copilot-tools --source:[plugins="custom/path",instructions="other/path"] htt
 | `"root"` | Entire repository root treated as this category; all other categories set to `null` |
 | `"null"` | Exclude this category |
 | `"path/to/folder"` | Custom folder path; unspecified categories keep their defaults |
+| `[folder-a,folder-b,.]` | Array of folders searched in order (see [Array mappings](#array-mappings)); unspecified categories keep their defaults. An empty array is rejected |
+
+> **Note:** Most shells treat `[`, `]`, and `,` specially. Quote the whole argument if your shell changes it, for example `'--url:skills=[frontend,backend]'`.

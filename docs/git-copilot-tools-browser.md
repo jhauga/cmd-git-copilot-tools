@@ -83,6 +83,9 @@ A command-line tool that provides an interactive terminal list to browse, previe
      - [x] Support `root` value to treat repo root as a single category source
      - [x] Support `null` value to exclude a category
      - [x] Support custom folder paths (e.g., `src/my-prompts`)
+     - [x] Support an array of folders per category, searched in order, with `.` or `/` for the repository root
+     - [x] Download by bare name (first mapped folder that has it) or by `folder/name` (that folder only)
+     - [x] Report names missing from the mapped folders without stopping the rest of the download list
      - [x] Mappings persisted in config file alongside repository configuration
      - [x] API queries use resolved content paths based on folder mappings
      - [x] Categories mapped to `null` return empty results without errors

@@ -2,6 +2,7 @@ import { spawnSync } from 'child_process';
 import type { CopilotItem, GitHubFileEntry, RepositorySource, ToolCategory } from '../types.js';
 import { ORDERED_CATEGORIES } from '../types.js';
 import { cache, buildCacheKey } from './cache.js';
+import { getMappedFolders } from './mapping.js';
 
 declare const __PKG_VERSION__: string;
 
@@ -129,8 +130,8 @@ function getCategoryPath(repo: RepositorySource, category: ToolCategory): string
     return category;
   }
   const mapping = repo.folderMappings[category];
-  if (mapping === null) {
-    return null; // excluded
+  if (mapping === null || Array.isArray(mapping)) {
+    return null; // excluded (array mappings are listed by fetchMappedFolders)
   }
   if (mapping === undefined) {
     return category; // default path
@@ -149,18 +150,14 @@ function hasRootMapping(repo: RepositorySource): ToolCategory | null {
   return null;
 }
 
-export async function fetchCategory(
+async function listCategoryEntries(
   repo: RepositorySource,
-  category: ToolCategory,
+  repoPath: string,
   token?: string,
   cacheTtl = DEFAULT_CACHE_TTL
-): Promise<CopilotItem[]> {
-  const repoPath = getCategoryPath(repo, category);
-  if (repoPath === null) {return [];} // excluded
-
-  let entries: GitHubFileEntry[];
+): Promise<GitHubFileEntry[]> {
   try {
-    entries = await getDirectoryContents(repo, repoPath, token, cacheTtl);
+    return await getDirectoryContents(repo, repoPath, token, cacheTtl);
   } catch (err) {
     // Only silently skip "path not found" (404) errors — category folder may not exist in this repo.
     // Re-throw rate-limit, auth, network, and other errors so callers can surface them.
@@ -169,38 +166,91 @@ export async function fetchCategory(
     }
     throw err;
   }
+}
+
+function toCopilotItems(
+  repo: RepositorySource,
+  category: ToolCategory,
+  entries: GitHubFileEntry[],
+  mappedFolder?: string
+): CopilotItem[] {
+  // Skills, plugins, and hooks are directories (folders); agents, instructions,
+  // prompts, and workflows are individual files.
+  const entryType = category === 'skills' || category === 'plugins' || category === 'hooks' ? 'dir' : 'file';
 
   const items: CopilotItem[] = [];
+  for (const entry of entries) {
+    if (entry.type !== entryType) {continue;}
+    const item: CopilotItem = {
+      // Array mappings key on the full path: two folders may hold the same name.
+      id: `${repo.owner}/${repo.repo}/${category}/${mappedFolder === undefined ? entry.name : entry.path}`,
+      name: entry.name,
+      category,
+      repo,
+      file: entry,
+    };
+    if (mappedFolder !== undefined) {item.mappedFolder = mappedFolder;}
+    items.push(item);
+  }
+  return items;
+}
 
-  if (category === 'skills' || category === 'plugins' || category === 'hooks') {
-    // Skills, plugins, and hooks are directories (folders)
-    for (const entry of entries) {
-      if (entry.type === 'dir') {
-        items.push({
-          id: `${repo.owner}/${repo.repo}/${category}/${entry.name}`,
-          name: entry.name,
-          category,
-          repo,
-          file: entry,
-        });
-      }
+/**
+ * List a tool type mapped to an array of folders. Items keep the configured
+ * folder order, which is the order a bare download name is resolved in.
+ */
+async function fetchMappedFolders(
+  repo: RepositorySource,
+  category: ToolCategory,
+  folders: string[],
+  token?: string,
+  cacheTtl = DEFAULT_CACHE_TTL
+): Promise<CopilotItem[]> {
+  // A root entry in the array must not list the other mapped folders as tools.
+  const mappedTopLevel = new Set(
+    folders.filter(folder => folder !== '').map(folder => folder.split('/')[0]!)
+  );
+
+  const results = await Promise.allSettled(
+    folders.map(folder => listCategoryEntries(repo, folder, token, cacheTtl))
+  );
+
+  const items: CopilotItem[] = [];
+  let firstError: Error | undefined;
+  results.forEach((result, i) => {
+    if (result.status === 'rejected') {
+      firstError ??= result.reason instanceof Error ? result.reason : new Error(String(result.reason));
+      return;
     }
-  } else {
-    // Agents, instructions, prompts, workflows are individual files
-    for (const entry of entries) {
-      if (entry.type === 'file') {
-        items.push({
-          id: `${repo.owner}/${repo.repo}/${category}/${entry.name}`,
-          name: entry.name,
-          category,
-          repo,
-          file: entry,
-        });
-      }
-    }
+    const folder = folders[i]!;
+    const entries = folder === ''
+      ? result.value.filter(entry => !mappedTopLevel.has(entry.name))
+      : result.value;
+    items.push(...toCopilotItems(repo, category, entries, folder));
+  });
+
+  if (items.length === 0 && firstError) {
+    throw firstError;
+  }
+  return items;
+}
+
+export async function fetchCategory(
+  repo: RepositorySource,
+  category: ToolCategory,
+  token?: string,
+  cacheTtl = DEFAULT_CACHE_TTL
+): Promise<CopilotItem[]> {
+  const folders = getMappedFolders(repo.folderMappings?.[category]);
+  if (folders) {
+    return fetchMappedFolders(repo, category, folders, token, cacheTtl);
   }
 
-  return items;
+  const repoPath = getCategoryPath(repo, category);
+  if (repoPath === null) {return [];} // excluded
+
+  const entries = await listCategoryEntries(repo, repoPath, token, cacheTtl);
+  return toCopilotItems(repo, category, entries);
 }
 
 export async function fetchAllTools(

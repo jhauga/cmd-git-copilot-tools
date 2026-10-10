@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-beta.1.1.0] - 2026-10-09
+
+### Added
+
+#### Folder Mappings
+
+- Added array values to `folderMappings`, so one category can be read from several folders in a source repository
+  - Works for every category: agents, cookbook, hooks, instructions, plugins, prompts, skills, and workflows
+  - Folders are searched in the order listed; `"."` or `"/"` in the array is the repository root
+  - A root entry does not list the other folders in the same array as tools
+  - An empty array lists nothing, the same as `null`
+- Added array values to the `--url:` and `--source:` config arguments, such as `--url:skills=[folder-a,folder-b,.]`, including inside bracket syntax (`--source:[skills=[folder-a,folder-b],agents=null]`)
+
+#### Downloads
+
+- Added folder-qualified names to every download option. `--skill folder/name` downloads from that folder only, and `./name` addresses the repository root
+- A bare name in a category mapped to an array is looked up in each folder in order, and the first folder that has it wins
+- Added `MappedToolNotFoundError`, raised when a name is missing from its mapped folders. The message names the folders searched, or the `folder/name` references where the tool does exist. In a multi-name download it is reported as a notice and the remaining names still download
+- Listings, search results, and download messages show array-mapped tools as `folder/name`, ready to pass back to a download option
+
+#### Programmatic API
+
+- Added the `engine/mapping.ts` module, exporting `normalizeMappedFolder`, `getMappedFolders`, `parseToolReference`, `formatToolReference`, `getItemFolder`, `getItemDisplayName`, and the `ToolReference` type
+- Added `resolveItemsByName` to the download module, which resolves one name or `folder/name` to the items it would download
+- Added the optional `mappedFolder` property to `CopilotItem`, set on items listed from an array mapping
+
+#### Tests
+
+- Added the `mapping` test suite covering folder normalization, array parsing, folder-qualified names, ordered listing, root handling, and name resolution, run offline against a seeded cache (`--test:mapping`, `npm run test:mapping`)
+- Added config-argument parser cases for array values
+
+### Changed
+
+- `FolderMappingValue` now includes `string[]`
+- Items listed from an array mapping use their full repository path in `id`, so two folders can hold a tool with the same name
+- The invalid config-argument message lists `hooks` as a valid category and describes array values
+
 ## [2.0.0-beta.1] - 2026-09-03
 
 ### Added

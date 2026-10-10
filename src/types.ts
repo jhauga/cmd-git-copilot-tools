@@ -2,7 +2,13 @@
 
 export type ToolCategory = 'agents' | 'cookbook' | 'hooks' | 'instructions' | 'plugins' | 'prompts' | 'skills' | 'workflows';
 
-export type FolderMappingValue = string | 'root' | null;
+/**
+ * Where a tool type is read from in a source repository:
+ *   - `string`   one folder path (or `'root'` for the whole repository root)
+ *   - `string[]` several folders, searched in order; `'.'` or `'/'` is the root
+ *   - `null`     the tool type is excluded
+ */
+export type FolderMappingValue = string | 'root' | string[] | null;
 
 export interface FolderMappings {
   agents?: FolderMappingValue;
@@ -46,6 +52,11 @@ export interface CopilotItem {
   repo: RepositorySource;
   file: GitHubFileEntry;
   content?: string;
+  /**
+   * Folder the item was listed from when its tool type is mapped to an array
+   * of folders (`''` for the repository root). Absent for single-path mappings.
+   */
+  mappedFolder?: string;
 }
 
 export interface DownloadMetadata {
@@ -135,6 +146,46 @@ export class ToolNotFoundError extends Error {
   constructor(toolName: string, category: ToolCategory | 'all') {
     super(`Tool '${toolName}' not found${category !== 'all' ? ` in ${category}` : ''}`);
     this.name = 'ToolNotFoundError';
+  }
+}
+
+/**
+ * A tool was not found in the folders its tool type is mapped to.
+ * Raised for bare names searched across an array mapping, and for
+ * folder-qualified names (`folder/name`) that miss the named folder.
+ */
+export class MappedToolNotFoundError extends Error {
+  readonly toolName: string;
+  /** Folder the caller asked for (`''` for the root); undefined for a bare name. */
+  readonly folder?: string;
+  /** Folders that list tools of this type, in search order. */
+  readonly searchedFolders: string[];
+  /** Folder-qualified references where a tool with this name does exist. */
+  readonly foundIn: string[];
+
+  constructor(toolName: string, searchedFolders: string[], folder?: string, foundIn: string[] = []) {
+    const show = (f: string) => (f === '' ? '.' : f);
+    let message: string;
+    if (folder === undefined) {
+      const searched = searchedFolders.map(show).join(', ');
+      message = `Tool '${toolName}' not found in any mapped folder (searched: ${searched}). ` +
+        'Use --search to find available tools.';
+    } else {
+      message = `Tool '${toolName}' not found in folder '${show(folder)}'.`;
+      if (foundIn.length > 0) {
+        message += ` Found as: ${foundIn.join(', ')}`;
+      } else if (searchedFolders.length > 0) {
+        message += ` Available folders: ${searchedFolders.map(show).join(', ')}`;
+      } else {
+        message += ' Use --search to find available tools.';
+      }
+    }
+    super(message);
+    this.name = 'MappedToolNotFoundError';
+    this.toolName = toolName;
+    this.folder = folder;
+    this.searchedFolders = searchedFolders;
+    this.foundIn = foundIn;
   }
 }
 

@@ -15,7 +15,7 @@
   "qna": "https://github.com/jhauga/cmd-git-copilot-tools/issues",
   "homepage": "https://github.com/jhauga/cmd-git-copilot-tools",
   "description": "Browse and download agents, cookbook, hooks, instructions, plugins, prompts, skills, and workflows from GitHub repositories with Copilot custom tools. Command-line tool port of the original VS Code extension.",
-  "version": "2.0.0-beta.1",
+  "version": "2.0.0-beta.1.1.0",
   "license": "MIT",
   "keywords": [
     "github-copilot",
@@ -74,6 +74,8 @@
     "test:download:log": "node dist/cli.js --test:download:log",
     "test:folder": "node dist/cli.js --test:folder",
     "test:folder:log": "node dist/cli.js --test:folder:log",
+    "test:mapping": "node dist/cli.js --test:mapping",
+    "test:mapping:log": "node dist/cli.js --test:mapping:log",
     "test:programmatic": "node dist/cli.js --test:programmatic",
     "test:programmatic:log": "node dist/cli.js --test:programmatic:log",
     "test:full": "node dist/cli.js --test:full",

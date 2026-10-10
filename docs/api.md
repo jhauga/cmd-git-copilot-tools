@@ -16,6 +16,7 @@ src/
 │   ├── cache.ts      ← In-memory TTL cache
 │   ├── download.ts   ← File and directory download
 │   ├── folder.ts     ← A.I. folder resolution for download paths
+│   ├── mapping.ts    ← Array folder mappings and folder/name references
 │   └── search.ts     ← Search, filter, and selection helpers
 ├── ui/               ← Terminal UI (CLI-specific, not part of the API)
 │   ├── renderer.ts
@@ -115,17 +116,23 @@ interface RepositorySource {
   baseUrl?: string;      // GitHub Enterprise base URL
   branch?: string;
   folderMappings?: {     // Custom folder-to-category mappings
-    agents?: string | 'root' | null;
-    hooks?: string | 'root' | null;
-    instructions?: string | 'root' | null;
-    plugins?: string | 'root' | null;
-    prompts?: string | 'root' | null;
-    skills?: string | 'root' | null;
-    workflows?: string | 'root' | null;
+    agents?: FolderMappingValue;
+    cookbook?: FolderMappingValue;
+    hooks?: FolderMappingValue;
+    instructions?: FolderMappingValue;
+    plugins?: FolderMappingValue;
+    prompts?: FolderMappingValue;
+    skills?: FolderMappingValue;
+    workflows?: FolderMappingValue;
   };
   aiFolder?: string;     // A.I. folder for this source (relative paths only)
 }
+
+// One folder, the whole root, several folders searched in order, or excluded
+type FolderMappingValue = string | 'root' | string[] | null;
 ```
+
+An array value spreads a category across several folders. `"."` or `"/"` in the array is the repository root. See [`engine/mapping.ts`](#enginemappingts--folder-mappings) for how items from an array mapping are listed and resolved.
 
 ---
 
@@ -164,8 +171,11 @@ interface CopilotItem {
     sha: string;
   };
   content?: string;
+  mappedFolder?: string;  // Folder listed from, for array mappings ('' = root)
 }
 ```
+
+For a category mapped to an array of folders, `fetchCategory` lists every folder in the configured order and sets `mappedFolder` on each item. Items from single-path mappings leave it unset.
 
 #### Authentication
 
@@ -228,6 +238,7 @@ Downloads items to a target directory, preserving the `.github/{category}/` fold
 import {
   downloadItem,         // Download a single CopilotItem (file or directory)
   downloadItemsByName,  // Download items matched by name from a list
+  resolveItemsByName,   // Resolve one name or folder/name to the items it would download
   downloadFile,         // Download a raw URL to a specific path
   getFileSizeDisplay,   // Format bytes as '1.5KB', '2.0MB', etc.
 } from 'cmd-git-copilot-tools/src/engine/download.js';
@@ -254,6 +265,24 @@ interface DownloadOptions {
 ```
 
 Omit it and the item's own source is consulted, then the built-in `.github` default.
+
+#### Resolving names
+
+`downloadItemsByName` resolves each requested name with `resolveItemsByName`, which accepts two forms:
+
+| Name | Matches |
+| --- | --- |
+| `my-skill` | The tool in any folder. Items keep folder-mapping order, so the first folder that holds it wins |
+| `backend/my-skill` | The tool only in the `backend` folder (`./my-skill` for the repository root) |
+
+```typescript
+const skills = filterByCategory(items, 'skills');
+
+resolveItemsByName(skills, 'my-skill');          // first folder that has it
+resolveItemsByName(skills, 'backend/my-skill');  // backend only
+```
+
+When nothing matches, a bare name from a source without array mappings throws an `Error` with the original message. Every other miss throws a `MappedToolNotFoundError`, which carries `toolName`, `folder`, `searchedFolders`, and `foundIn` (the `folder/name` references where the tool does exist).
 
 #### Download paths
 
@@ -313,6 +342,28 @@ const dir = resolveCategoryDir(workspaceFolder, 'skills', folder);
 ```
 
 `isAbsolutePath` recognizes POSIX roots (`/opt/ai`), Windows drive paths (`C:\ai`), UNC shares (`\\server\share`), and home-anchored paths (`~/ai`) regardless of the platform it runs on. `setDefaultFolder` uses it to reject absolute values with an `AbsoluteFolderPathError`; only `folderOverride` accepts them.
+
+---
+
+### `engine/mapping.ts` — Folder Mappings
+
+Pure helpers for array folder mappings and folder-qualified tool names.
+
+```typescript
+import {
+  normalizeMappedFolder, // './frontend/' → 'frontend'; '.', '/', './' → '' (root)
+  getMappedFolders,      // Array mapping → normalized, de-duplicated folders; otherwise null
+  parseToolReference,    // 'backend/my-skill' → { folder: 'backend', name: 'my-skill' }
+  formatToolReference,   // ('backend', 'my-skill') → 'backend/my-skill'; ('', 'my-skill') → './my-skill'
+  getItemFolder,         // Folder an item was listed from ('' = root)
+  getItemDisplayName,    // 'backend/my-skill' for array-mapped items, otherwise the plain name
+} from 'cmd-git-copilot-tools';
+
+getMappedFolders(['frontend', './frontend', 'backend', '.']); // ['frontend', 'backend', '']
+getMappedFolders('custom/path');                             // null
+```
+
+When an array includes the root, the root listing skips entries named after the other folders in the same array, so they are not listed as tools.
 
 ---
 
@@ -400,8 +451,10 @@ import type {
   DownloadMetadata,    // Result of a download operation
   Config,              // Full config file shape
   FolderMappings,      // Custom folder-to-category mapping config
+  FolderMappingValue,  // string | 'root' | string[] | null
   // Error types:
   ToolNotFoundError,
+  MappedToolNotFoundError,
   SourceNotFoundError,
   InvalidUrlError,
   OnlyOneSourceError,

@@ -259,7 +259,7 @@ cmd-copilot-tools [options]
 | `--instruction [name,...]` | Show instructions, or download named instruction(s). Extension (`.instructions.md`) is optional |
 | `--plugin [name,...]` | Show plugins, or download named plugin(s) |
 | `--prompt [name,...]` | Show prompts, or download named prompt(s). Extension (`.prompt.md`) is optional |
-| `--skill [name,...]` | Show skills, or download named skill(s) |
+| `--skill [name,...]` | Show skills, or download named skill(s). A name can be folder-qualified (`folder/name`) when the source maps skills to [several folders](#tools-grouped-into-several-folders) |
 | `--workflow [name,...]` | Show workflows, or download named workflow(s). Extension (`.workflow.md`) is optional |
 | `--search <term>[,term]` | Search tools (non-interactive output) |
 | `--source <url> [label]` | Add a GitHub repository as a source |
@@ -275,7 +275,7 @@ cmd-copilot-tools [options]
 | `--list-source` | List all configured sources |
 | `-f`, `--folder <path>` | Download into `<path>/<category>` for this run, bypassing the configured default. The only place an absolute path is accepted |
 | `--test` | Run all tests (unit + integration) |
-| `--test:<name>` | Run a specific suite: `search`, `config`, `download`, `folder`, `cli`, `permissions`, `programmatic`, `full` |
+| `--test:<name>` | Run a specific suite: `search`, `config`, `download`, `folder`, `mapping`, `cli`, `permissions`, `programmatic`, `full` |
 | `--test:log` | Run all tests and save log to `logs/` |
 | `--test:<name>:log` | Run specific suite and save log |
 | `--log` | Save test log to `logs/` (requires `--test`) |
@@ -426,6 +426,9 @@ cmd-copilot-tools --url:skills=root https://github.com/owner/repo --skill my-ski
 cmd-copilot-tools --url:plugins="custom/path" https://github.com/owner/repo --plugin my-plugin
 cmd-copilot-tools --url:[plugins="path",instructions="path"] https://github.com/owner/repo
 
+# Use a temp URL whose skills are spread across several folders
+cmd-copilot-tools --url:skills=[frontend,backend,.] https://github.com/owner/repo --skill backend/my-skill
+
 # Add a source with folder mappings
 cmd-copilot-tools --source:skills=root https://github.com/owner/repo
 cmd-copilot-tools --source:instructions="custom/path" https://github.com/owner/repo tool
@@ -481,6 +484,54 @@ Not all source repositories follow the default `.github/{category}` folder struc
 | `"root"` | Entire repository root treated as this category |
 | `null` | Category excluded entirely |
 | `"custom/path"` | Custom folder path within the repository |
+| `["folder-a", "folder-b", "."]` | Several folders, searched in order. `"."` or `"/"` is the repository root |
+
+### Tools grouped into several folders
+
+Some repositories group one category into several folders. Map that category to an array, and every folder is listed in the order given. This works for every category, not only skills:
+
+```json
+{
+  "sources": [
+    {
+      "owner": "acme-corp",
+      "repo": "copilot-skills",
+      "label": "acme",
+      "folderMappings": {
+        "skills": ["frontend", "backend", "testing"],
+        "agents": null,
+        "instructions": null,
+        "plugins": null,
+        "prompts": null,
+        "workflows": null
+      }
+    }
+  ]
+}
+```
+
+Listings show each tool with its folder (`frontend/my-skill`), and download options accept either form:
+
+```bash
+# Bare name: looks in frontend, then backend, then testing. The first folder that has it wins
+cmd-copilot-tools --use acme --skill my-skill
+
+# Folder-qualified name: downloads from that folder only
+cmd-copilot-tools --use acme --skill backend/my-skill
+
+# Mix both forms in one list; each name is resolved on its own
+cmd-copilot-tools --use acme --skill frontend/my-skill,other-skill,testing/third-skill
+```
+
+A name that is not found is reported as a notice, and the rest of the list still downloads:
+
+```text
+Notices:
+  Tool 'my-skill' not found in folder 'testing'. Found as: frontend/my-skill
+  Tool 'missing-skill' not found in any mapped folder (searched: frontend, backend, testing). Use --search to find available tools.
+```
+
+Tools still download flat into `<ai-folder>/<category>/<name>`. The folder only controls where a tool is read from. For temporary sources, use `--url:skills=[frontend,backend] <url>`. See [docs/configuration.md](docs/configuration.md#array-mappings) for the full rules.
 
 ## Authentication
 
@@ -575,6 +626,7 @@ Run individual suites:
 npm run test:search      # search/filter unit tests
 npm run test:config      # config management unit tests
 npm run test:download    # download path unit tests
+npm run test:mapping     # folder-mapping arrays and folder/name resolution
 npm run test:full        # live integration test (fetches from GitHub, downloads to OS temp)
 ```
 

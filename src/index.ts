@@ -20,6 +20,7 @@ export {
   DOWNLOAD_PATHS,
   DEFAULT_AI_FOLDER,
   AbsoluteFolderPathError,
+  MappedToolNotFoundError,
   ToolNotFoundError,
   SourceNotFoundError,
   InvalidUrlError,
@@ -63,8 +64,20 @@ export {
   downloadItemsByName,
   downloadFile,
   matchesToolName,
+  resolveItemsByName,
   getFileSizeDisplay,
 } from './engine/download.js';
+
+// Export folder-mapping helpers (array mappings and folder/name references)
+export type { ToolReference } from './engine/mapping.js';
+export {
+  normalizeMappedFolder,
+  getMappedFolders,
+  parseToolReference,
+  formatToolReference,
+  getItemFolder,
+  getItemDisplayName,
+} from './engine/mapping.js';
 
 // Export A.I. folder resolution helpers
 export type { AiFolderContext } from './engine/folder.js';

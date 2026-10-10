@@ -4,6 +4,7 @@ import { fetchAllToolsFromSources } from '../engine/github.js';
 import { getToken } from '../engine/github.js';
 import { downloadItem } from '../engine/download.js';
 import { searchTools, filterByCategory, findByCode } from '../engine/search.js';
+import { getItemDisplayName } from '../engine/mapping.js';
 import {
   ANSI,
   hrLine,
@@ -127,7 +128,8 @@ async function handleDownload(state: UIState, code: string, config: Config): Pro
     return;
   }
 
-  state.statusMessage = dim(`  Downloading ${item.name}...`);
+  const displayName = getItemDisplayName(item);
+  state.statusMessage = dim(`  Downloading ${displayName}...`);
   clearAndRender(state);
 
   try {
@@ -135,7 +137,7 @@ async function handleDownload(state: UIState, code: string, config: Config): Pro
       folderOverride: state.folderOverride,
       configFolder: config.aiFolder,
     });
-    state.statusMessage = renderDownloadSuccess(item.name, meta.localPath);
+    state.statusMessage = renderDownloadSuccess(displayName, meta.localPath);
   } catch (err) {
     state.statusMessage = renderError(err instanceof Error ? err.message : String(err));
   }
