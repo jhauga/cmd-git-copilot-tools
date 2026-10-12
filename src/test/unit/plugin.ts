@@ -2,15 +2,18 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  AWESOME_COPILOT_NAMESPACE,
   KIND_TO_CATEGORY,
-  PLUGIN_JSON_RELATIVE_PATH,
+  PLUGIN_MANIFEST_PATHS,
   downloadPlugin,
+  getSkippedPluginEntries,
   parsePluginJson,
   parsePluginMetadata,
 } from '../../engine/plugin.js';
 import type { PluginMetadata } from '../../engine/plugin.js';
 import { buildApiUrl } from '../../engine/github.js';
 import { cache } from '../../engine/cache.js';
+import { GitHubApiError } from '../../types.js';
 import type { CopilotItem, GitHubFileEntry, RepositorySource } from '../../types.js';
 import { toBase64, withFetchStub } from '../stub.js';
 import type { StubRoute } from '../stub.js';
@@ -19,6 +22,8 @@ import type { SuiteResult } from '../runner.js';
 
 const repo: RepositorySource = { owner: 'acme-corp', repo: 'copilot-tools' };
 const PLUGIN_DIR = 'plugins/sample-plugin';
+const ROOT_MANIFEST = `${PLUGIN_DIR}/plugin.json`;
+const LEGACY_MANIFEST = `${PLUGIN_DIR}/.github/plugin/plugin.json`;
 const RAW = 'https://raw.example.com';
 
 function entry(entryPath: string, type: 'file' | 'dir', size = 0): GitHubFileEntry {
@@ -52,6 +57,15 @@ function expectInvalid(manifest: object | string, detail: string): void {
   assert(message.includes(detail), `expected '${detail}' in: ${message}`);
 }
 
+async function catchAsync(fn: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await fn();
+  } catch (err) {
+    return err;
+  }
+  return undefined;
+}
+
 function pluginItem(source: RepositorySource): CopilotItem {
   return {
     id: `${source.owner}/${source.repo}/plugins/sample-plugin`,
@@ -62,7 +76,8 @@ function pluginItem(source: RepositorySource): CopilotItem {
   };
 }
 
-const sampleManifest = {
+/** Plugin-relative arrays, kept in `.github/plugin/plugin.json`. */
+const relativeManifest = {
   name: 'Sample Plugin',
   description: 'Bundles a few tools',
   version: '1.0.0',
@@ -71,11 +86,25 @@ const sampleManifest = {
   instructions: ['./instructions/coding.instructions.md'],
 };
 
-/** Every URL a full download of the sample plugin requests. */
-function sampleRoutes(manifest: object): Record<string, StubRoute> {
-  const manifestPath = `${PLUGIN_DIR}/${PLUGIN_JSON_RELATIVE_PATH}`;
+/** Agent Plugins layout, kept in `plugin.json` at the plugin folder root. */
+const agentPluginsManifest = {
+  $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
+  name: 'sample-plugin',
+  description: 'Bundles repository agents and skills',
+  version: '1.0.0',
+  extensions: {
+    [AWESOME_COPILOT_NAMESPACE]: {
+      agents: ['./agents/helper.md'],
+      skills: ['./skills/my-skill/'],
+      extensions: ['./extensions/sample-board'],
+    },
+  },
+};
+
+/** Every URL a download of the plugin-relative sample requests. */
+function relativeRoutes(manifest: object): Record<string, StubRoute> {
   return {
-    [buildApiUrl(repo, manifestPath)]: fileRoute(manifestPath, JSON.stringify(manifest)),
+    [buildApiUrl(repo, LEGACY_MANIFEST)]: fileRoute(LEGACY_MANIFEST, JSON.stringify(manifest)),
     [buildApiUrl(repo, `${PLUGIN_DIR}/agents`)]: { body: [entry(`${PLUGIN_DIR}/agents/helper.agent.md`, 'file')] },
     [`${RAW}/${PLUGIN_DIR}/agents/helper.agent.md`]: { body: '# helper' },
     [buildApiUrl(repo, `${PLUGIN_DIR}/skills/my-skill`)]: {
@@ -103,6 +132,21 @@ function sampleRoutes(manifest: object): Record<string, StubRoute> {
   };
 }
 
+/** Every URL a download of the Agent Plugins sample requests. */
+function agentPluginsRoutes(): Record<string, StubRoute> {
+  return {
+    [buildApiUrl(repo, ROOT_MANIFEST)]: fileRoute(ROOT_MANIFEST, JSON.stringify(agentPluginsManifest)),
+    [buildApiUrl(repo, 'agents/helper.agent.md')]: fileRoute('agents/helper.agent.md', '# helper'),
+    [buildApiUrl(repo, 'skills/my-skill')]: { body: [entry('skills/my-skill/SKILL.md', 'file')] },
+    [`${RAW}/skills/my-skill/SKILL.md`]: { body: '# skill' },
+    [buildApiUrl(repo, PLUGIN_DIR)]: {
+      body: [entry(`${PLUGIN_DIR}/README.md`, 'file'), entry(ROOT_MANIFEST, 'file'), entry(`${PLUGIN_DIR}/mcp.json`, 'file')],
+    },
+    [`${RAW}/${PLUGIN_DIR}/README.md`]: { body: '# Sample Plugin' },
+    [`${RAW}/${PLUGIN_DIR}/mcp.json`]: { body: '{ "servers": {} }' },
+  };
+}
+
 function tempDir(): string {
   const dir = path.join(os.tmpdir(), 'cmd-git-copilot-tools', 'test-plugin');
   fs.rmSync(dir, { recursive: true, force: true });
@@ -116,7 +160,7 @@ function readText(filePath: string): string {
 
 export async function runPluginSuite(): Promise<SuiteResult> {
   const result = await runSuite('unit: plugin', {
-    // --- parsePluginMetadata: legacy layout --------------------------------
+    // --- parsePluginMetadata: legacy items -----------------------------------
     'parsePluginMetadata: parses a legacy manifest with every required field': () => {
       const metadata = parse({
         name: 'Sample Plugin',
@@ -194,7 +238,7 @@ export async function runPluginSuite(): Promise<SuiteResult> {
       assertEqual(metadata.display?.ordering, 'custom');
       assertEqual(metadata.display?.show_badge, false);
     },
-    'parsePluginMetadata: keeps items of every kind in order': () => {
+    'parsePluginMetadata: keeps legacy items of every kind in order': () => {
       const metadata = parse({
         name: 'Multi-Kind Plugin',
         description: 'Plugin with multiple item kinds',
@@ -203,19 +247,20 @@ export async function runPluginSuite(): Promise<SuiteResult> {
           { path: 'prompts/sample.prompt.md', kind: 'prompt' },
           { path: 'agents/helper.agent.md', kind: 'agent' },
           { path: 'skills/analyzer', kind: 'skill' },
+          { path: 'hooks/session-logger', kind: 'hook' },
         ],
       });
-      assertDeepEqual(metadata.items!.map(item => item.kind), ['instruction', 'prompt', 'agent', 'skill']);
+      assertDeepEqual(metadata.items!.map(item => item.kind), ['instruction', 'prompt', 'agent', 'skill', 'hook']);
     },
     'parsePluginMetadata: rejects an unsupported kind': () => {
-      expectInvalid({ name: 'Sample Plugin', description: 'A plugin', items: [{ path: 'hooks/sample', kind: 'hook' }] }, 'unsupported "kind" value "hook"');
+      expectInvalid({ name: 'Sample Plugin', description: 'A plugin', items: [{ path: 'extensions/board', kind: 'extension' }] }, 'unsupported "kind" value "extension"');
     },
     'parsePluginMetadata: rejects an item without a path': () => {
       expectInvalid({ name: 'Sample Plugin', description: 'A plugin', items: [{ kind: 'prompt' }] }, 'missing or has an invalid "path" field');
     },
 
-    // --- parsePluginMetadata: current layout -------------------------------
-    'parsePluginMetadata: resolves current-layout agents and skills to repository paths': () => {
+    // --- parsePluginMetadata: plugin-relative arrays -------------------------
+    'parsePluginMetadata: resolves plugin-relative agents and skills to repository paths': () => {
       const metadata = parse({
         name: 'sample-plugin',
         description: 'Meta prompts for discovery',
@@ -230,17 +275,17 @@ export async function runPluginSuite(): Promise<SuiteResult> {
       assertEqual(metadata.items![1]!.path, `${PLUGIN_DIR}/skills/suggest-skills`);
       assertEqual(metadata.items![2]!.path, `${PLUGIN_DIR}/skills/suggest-instructions`);
     },
-    'parsePluginMetadata: current layout with skills only': () => {
+    'parsePluginMetadata: plugin-relative layout with skills only': () => {
       const metadata = parse({ name: 'Skills Only Plugin', description: 'A plugin with only skills', skills: ['./skills/my-skill'] });
       assertEqual(metadata.items!.length, 1);
       assertEqual(metadata.items![0]!.kind, 'skill');
       assertEqual(metadata.items![0]!.path, `${PLUGIN_DIR}/skills/my-skill`);
     },
-    'parsePluginMetadata: strips trailing slashes from current-layout paths': () => {
+    'parsePluginMetadata: strips trailing slashes from plugin-relative paths': () => {
       const metadata = parse({ name: 'Slash Plugin', description: 'Trailing slashes', skills: ['./skills/my-skill/'] });
       assertEqual(metadata.items![0]!.path, `${PLUGIN_DIR}/skills/my-skill`);
     },
-    'parsePluginMetadata: current layout lists agents, skills, instructions, then prompts': () => {
+    'parsePluginMetadata: plugin-relative layout lists agents, skills, instructions, then prompts': () => {
       const metadata = parse({
         name: 'Ordered Plugin',
         description: 'Every kind',
@@ -251,45 +296,127 @@ export async function runPluginSuite(): Promise<SuiteResult> {
       });
       assertDeepEqual(metadata.items!.map(item => item.kind), ['agent', 'skill', 'instruction', 'prompt']);
     },
+
+    // --- parsePluginMetadata: Agent Plugins layout ---------------------------
+    'parsePluginMetadata: maps Agent Plugins entries to repository paths': () => {
+      const metadata = parse({
+        name: 'sample-plugin',
+        description: 'Repository agents, skills, and hooks',
+        extensions: {
+          [AWESOME_COPILOT_NAMESPACE]: {
+            agents: ['./agents/helper.md', './agents/reviewer.agent.md'],
+            skills: ['./skills/my-skill/'],
+            hooks: ['./hooks/session-logger/'],
+          },
+        },
+      });
+      assertEqual(metadata.id, 'sample-plugin');
+      assertDeepEqual(metadata.items, [
+        { path: 'agents/helper.agent.md', kind: 'agent' },
+        { path: 'agents/reviewer.agent.md', kind: 'agent' },
+        { path: 'skills/my-skill', kind: 'skill' },
+        { path: 'hooks/session-logger', kind: 'hook' },
+      ]);
+    },
+    'parsePluginMetadata: a manifest with only Copilot extensions lists no items': () => {
+      const metadata = parse({
+        name: 'board-plugin',
+        description: 'A canvas extension',
+        extensions: { [AWESOME_COPILOT_NAMESPACE]: { extensions: ['./extensions/sample-board'] } },
+      });
+      assertDeepEqual(metadata.items, []);
+    },
+    'getSkippedPluginEntries: reports Copilot extensions and unrecognized paths': () => {
+      const metadata = parse({
+        name: 'mixed-plugin',
+        description: 'Entries the downloader skips',
+        extensions: {
+          [AWESOME_COPILOT_NAMESPACE]: {
+            agents: ['./agents/nested/helper.md', './agents/ok.md'],
+            skills: ['skills/no-leading-dot'],
+            extensions: ['./extensions/sample-board'],
+          },
+        },
+      });
+      assertDeepEqual(metadata.items, [{ path: 'agents/ok.agent.md', kind: 'agent' }]);
+      assertDeepEqual(getSkippedPluginEntries(metadata), [
+        './agents/nested/helper.md (unrecognized agents path)',
+        'skills/no-leading-dot (unrecognized skills path)',
+        './extensions/sample-board (Copilot extension, not downloaded)',
+      ]);
+    },
+    'getSkippedPluginEntries: nothing to report for the other layouts': () => {
+      assertDeepEqual(getSkippedPluginEntries(parse(relativeManifest)), []);
+    },
     'KIND_TO_CATEGORY: maps every kind to its tool type': () => {
-      assertDeepEqual(KIND_TO_CATEGORY, { instruction: 'instructions', prompt: 'prompts', agent: 'agents', skill: 'skills' });
+      assertDeepEqual(KIND_TO_CATEGORY, { instruction: 'instructions', prompt: 'prompts', agent: 'agents', skill: 'skills', hook: 'hooks' });
+    },
+    'PLUGIN_MANIFEST_PATHS: the folder root comes before .github/plugin': () => {
+      assertDeepEqual([...PLUGIN_MANIFEST_PATHS], ['plugin.json', '.github/plugin/plugin.json']);
     },
 
-    // --- parsePluginJson ---------------------------------------------------
-    'parsePluginJson: fetches the manifest and returns the raw text': async () => {
+    // --- parsePluginJson ------------------------------------------------------
+    'parsePluginJson: reads plugin.json at the plugin folder root first': async () => {
       cache.clearRepo(repo);
-      const manifestPath = `${PLUGIN_DIR}/${PLUGIN_JSON_RELATIVE_PATH}`;
-      const text = JSON.stringify(sampleManifest);
-      await withFetchStub({ [buildApiUrl(repo, manifestPath)]: fileRoute(manifestPath, text) }, async () => {
+      const text = JSON.stringify(agentPluginsManifest);
+      await withFetchStub({ [buildApiUrl(repo, ROOT_MANIFEST)]: fileRoute(ROOT_MANIFEST, text) }, async stub => {
         const parsed = await parsePluginJson(repo, PLUGIN_DIR);
+        assertEqual(parsed.manifestPath, ROOT_MANIFEST);
+        assertEqual(parsed.rawContent, text);
+        assertEqual(parsed.metadata.items!.length, 2);
+        assertEqual(stub.calls.length, 1, 'one request');
+      });
+    },
+    'parsePluginJson: falls back to .github/plugin/plugin.json': async () => {
+      cache.clearRepo(repo);
+      const text = JSON.stringify(relativeManifest);
+      await withFetchStub({ [buildApiUrl(repo, LEGACY_MANIFEST)]: fileRoute(LEGACY_MANIFEST, text) }, async stub => {
+        const parsed = await parsePluginJson(repo, PLUGIN_DIR);
+        assertEqual(parsed.manifestPath, LEGACY_MANIFEST);
         assertEqual(parsed.rawContent, text);
         assertEqual(parsed.metadata.id, 'sample-plugin');
         assertEqual(parsed.metadata.items!.length, 3);
+        assertEqual(stub.calls.length, 2, 'the root location is tried first');
+      });
+    },
+    'parsePluginJson: reports a folder without a manifest': async () => {
+      cache.clearRepo(repo);
+      await withFetchStub({}, async () => {
+        const err = await catchAsync(() => parsePluginJson(repo, PLUGIN_DIR));
+        assert(err instanceof Error && !(err instanceof GitHubApiError), 'should throw a plain Error');
+        assertEqual(
+          (err as Error).message,
+          `Failed to parse plugin.json: no manifest in '${PLUGIN_DIR}' (looked for plugin.json, .github/plugin/plugin.json)`
+        );
+      });
+    },
+    'parsePluginJson: lets other GitHub failures through': async () => {
+      cache.clearRepo(repo);
+      await withFetchStub({
+        [buildApiUrl(repo, ROOT_MANIFEST)]: { status: 403, headers: { 'x-ratelimit-remaining': '0' }, body: { message: 'rate limited' } },
+      }, async () => {
+        const err = await catchAsync(() => parsePluginJson(repo, PLUGIN_DIR));
+        assert(err instanceof GitHubApiError, 'should throw GitHubApiError');
+        assertEqual((err as GitHubApiError).isRateLimit, true);
       });
     },
     'parsePluginJson: prefixes manifest problems': async () => {
       cache.clearRepo(repo);
-      const manifestPath = `${PLUGIN_DIR}/${PLUGIN_JSON_RELATIVE_PATH}`;
-      await withFetchStub({ [buildApiUrl(repo, manifestPath)]: fileRoute(manifestPath, 'not json {{{') }, async () => {
-        let message = '';
-        try {
-          await parsePluginJson(repo, PLUGIN_DIR);
-        } catch (err) {
-          message = err instanceof Error ? err.message : String(err);
-        }
-        assertEqual(message, 'Failed to parse plugin.json: Invalid plugin.json format: not valid JSON');
+      await withFetchStub({ [buildApiUrl(repo, ROOT_MANIFEST)]: fileRoute(ROOT_MANIFEST, 'not json {{{') }, async () => {
+        const err = await catchAsync(() => parsePluginJson(repo, PLUGIN_DIR));
+        assertEqual((err as Error).message, 'Failed to parse plugin.json: Invalid plugin.json format: not valid JSON');
       });
     },
 
-    // --- downloadPlugin ----------------------------------------------------
-    'downloadPlugin: writes items to their category folders and the plugin folder': async () => {
+    // --- downloadPlugin -------------------------------------------------------
+    'downloadPlugin: plugin-relative items land in their category folders': async () => {
       cache.clearRepo(repo);
       const dest = tempDir();
       const staleSkillFile = path.join(dest, '.github', 'skills', 'my-skill', 'stale.md');
       fs.mkdirSync(path.dirname(staleSkillFile), { recursive: true });
       fs.writeFileSync(staleSkillFile, 'old', 'utf-8');
 
-      await withFetchStub(sampleRoutes(sampleManifest), async () => {
+      await withFetchStub(relativeRoutes(relativeManifest), async () => {
         const result = await downloadPlugin(pluginItem(repo), dest);
 
         assertDeepEqual(result.failed, []);
@@ -310,12 +437,36 @@ export async function runPluginSuite(): Promise<SuiteResult> {
         assertEqual(readText(path.join(github, 'instructions', 'coding.instructions.md')), '# coding');
 
         const pluginDir = result.pluginDir;
-        const manifest = JSON.parse(readText(path.join(pluginDir, '.github', 'plugin', 'plugin.json'))) as PluginMetadata;
-        assertEqual(manifest.id, 'sample-plugin');
-        assertEqual(manifest.items!.length, 3);
+        assertDeepEqual(JSON.parse(readText(path.join(pluginDir, '.github', 'plugin', 'plugin.json'))), relativeManifest);
         assertEqual(readText(path.join(pluginDir, 'agents', 'helper.agent.md')), '# helper');
         assertEqual(readText(path.join(pluginDir, 'commands', 'do-thing.md')), '# do thing');
         assertEqual(readText(path.join(pluginDir, 'README.md')), '# Sample Plugin');
+        assert(!fs.existsSync(path.join(pluginDir, 'skills')), 'only agents/ and commands/ are copied into the plugin folder');
+      });
+
+      fs.rmSync(dest, { recursive: true, force: true });
+    },
+    'downloadPlugin: Agent Plugins items come from the repository folders': async () => {
+      cache.clearRepo(repo);
+      const dest = tempDir();
+
+      await withFetchStub(agentPluginsRoutes(), async () => {
+        const result = await downloadPlugin(pluginItem(repo), dest);
+
+        assertDeepEqual(result.failed, []);
+        assertDeepEqual(result.downloaded, ['agent: helper.agent.md', 'skill: my-skill (1 files)']);
+        assertDeepEqual(result.notices, ['./extensions/sample-board (Copilot extension, not downloaded)']);
+        assertEqual(result.readmeContent, '# Sample Plugin');
+
+        const github = path.join(dest, '.github');
+        assertEqual(readText(path.join(github, 'agents', 'helper.agent.md')), '# helper');
+        assertEqual(readText(path.join(github, 'skills', 'my-skill', 'SKILL.md')), '# skill');
+
+        const pluginDir = path.join(github, 'plugins', 'sample-plugin');
+        assertEqual(result.pluginDir, pluginDir);
+        assertDeepEqual(JSON.parse(readText(path.join(pluginDir, 'plugin.json'))), agentPluginsManifest);
+        assertEqual(readText(path.join(pluginDir, 'README.md')), '# Sample Plugin');
+        assertEqual(readText(path.join(pluginDir, 'mcp.json')), '{ "servers": {} }');
       });
 
       fs.rmSync(dest, { recursive: true, force: true });
@@ -323,9 +474,9 @@ export async function runPluginSuite(): Promise<SuiteResult> {
     'downloadPlugin: a failing item is reported and the rest still download': async () => {
       cache.clearRepo(repo);
       const dest = tempDir();
-      const manifest = { ...sampleManifest, instructions: ['./instructions/missing.instructions.md'] };
+      const manifest = { ...relativeManifest, instructions: ['./instructions/missing.instructions.md'] };
 
-      await withFetchStub(sampleRoutes(manifest), async () => {
+      await withFetchStub(relativeRoutes(manifest), async () => {
         const result = await downloadPlugin(pluginItem(repo), dest);
         assertEqual(result.downloaded.length, 2);
         assertEqual(result.failed.length, 1);
@@ -341,7 +492,7 @@ export async function runPluginSuite(): Promise<SuiteResult> {
       const dest = tempDir();
       const claudeRepo: RepositorySource = { ...repo, aiFolder: '.claude' };
 
-      await withFetchStub(sampleRoutes(sampleManifest), async () => {
+      await withFetchStub(agentPluginsRoutes(), async () => {
         const result = await downloadPlugin(pluginItem(claudeRepo), dest);
         assertEqual(result.pluginDir, path.join(dest, '.claude', 'plugins', 'sample-plugin'));
         assert(fs.existsSync(path.join(dest, '.claude', 'skills', 'my-skill', 'SKILL.md')), 'skills land under .claude');
@@ -352,13 +503,8 @@ export async function runPluginSuite(): Promise<SuiteResult> {
     },
     'downloadPlugin: rejects an item that is not a plugin folder': async () => {
       const agent: CopilotItem = { ...pluginItem(repo), category: 'agents', file: entry('agents/helper.agent.md', 'file') };
-      let message = '';
-      try {
-        await downloadPlugin(agent, tempDir());
-      } catch (err) {
-        message = err instanceof Error ? err.message : String(err);
-      }
-      assert(message.includes('is not a plugin folder'), message);
+      const err = await catchAsync(() => downloadPlugin(agent, tempDir()));
+      assert(err instanceof Error && err.message.includes('is not a plugin folder'), String(err));
     },
   });
 

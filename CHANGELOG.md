@@ -11,9 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Programmatic API
 
-- Added the `engine/plugin.ts` module, exporting `parsePluginMetadata`, `parsePluginJson`, `downloadPlugin`, `KIND_TO_CATEGORY`, `PLUGIN_JSON_RELATIVE_PATH`, and the `PluginItem`, `PluginItemKind`, `PluginMetadata`, `PluginParseResult`, and `PluginDownloadResult` types
-  - `parsePluginMetadata` validates a manifest and normalizes both manifest layouts (the current `agents`, `skills`, `instructions`, and `prompts` arrays, and the legacy `items` array) to one `items` list
-  - `downloadPlugin` writes each listed agent, skill, instruction, and prompt to its own category folder, then copies the plugin's `agents/`, `commands/`, `README.md`, and manifest into `plugins/<id>/`. One failing item is reported without stopping the others
+- Added the `engine/plugin.ts` module, exporting `parsePluginMetadata`, `parsePluginJson`, `getSkippedPluginEntries`, `downloadPlugin`, `KIND_TO_CATEGORY`, `PLUGIN_MANIFEST_PATHS`, `AWESOME_COPILOT_NAMESPACE`, and the `PluginItem`, `PluginItemKind`, `PluginMetadata`, `PluginParseResult`, and `PluginDownloadResult` types
+  - `parsePluginJson` reads the manifest from `plugin.json` at the plugin folder root, or from `.github/plugin/plugin.json`
+  - `parsePluginMetadata` validates a manifest and normalizes three layouts to one `items` list: Agent Plugins manifests, whose `agents`, `skills`, and `hooks` under `extensions["com.github.awesome-copilot"]` name repository folders; plugin-relative `agents`, `skills`, `instructions`, and `prompts` arrays; and the legacy `items` array
+  - `downloadPlugin` writes each listed agent, skill, hook, instruction, and prompt to its own category folder, then copies the plugin's manifest, other top-level files, `agents/`, and `commands/` into `plugins/<id>/`. One failing item is reported without stopping the others, and Copilot extensions are reported as not downloaded
 - Added `GitHubApiError`, thrown for every failing GitHub response. It carries `status`, `url`, `rateLimitRemaining`, `rateLimitReset`, and `isRateLimit`
 - Added `getFileContentByPath`, `pathExists`, and `listDirectoryTree` to the GitHub module
 - Added `configureRequests` and the `RequestOptions` type, which set the request timeout and `allowInsecureEnterpriseCerts` for the process. With the option on, requests to GitHub Enterprise hosts skip certificate validation through an `undici` agent; requests to `github.com` always validate
@@ -24,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Tests
 
-- Added the `plugin` test suite covering manifest validation for both layouts, relative path resolution, id derivation, and an item-by-item download against a stubbed GitHub API (`--test:plugin`, `npm run test:plugin`)
+- Added the `plugin` test suite covering manifest discovery, validation of the three manifest layouts, path resolution, id derivation, skipped entries, and item-by-item downloads against a stubbed GitHub API (`--test:plugin`, `npm run test:plugin`)
 - Added the `github` test suite covering `GitHubApiError` classification, single-path reads, existence checks, recursive listings, and the enterprise certificate dispatcher (`--test:github`, `npm run test:github`)
 - Added a fetch stub for tests (`src/test/stub.ts`) that answers known URLs and returns 404 for every other URL
 

@@ -444,46 +444,54 @@ When an array includes the root, the root listing skips entries named after the 
 
 ### `engine/plugin.ts` - Plugins
 
-A plugin is a folder whose manifest, `.github/plugin/plugin.json`, lists the agents, skills, instructions and prompts it bundles. `downloadItem` copies a plugin folder as it is; `downloadPlugin` reads the manifest and places each item in its own category folder.
+A plugin is a folder whose manifest lists the agents, skills, hooks, instructions, and prompts it bundles. `downloadItem` copies a plugin folder as it is; `downloadPlugin` reads the manifest and places each item in its own category folder.
 
 ```typescript
 import {
-  parsePluginMetadata,       // Validate a manifest string; both layouts normalize to items[]
-  parsePluginJson,           // Fetch and parse the manifest of a plugin folder
+  parsePluginMetadata,       // Validate a manifest string; every layout normalizes to items[]
+  parsePluginJson,           // Find, fetch, and parse the manifest of a plugin folder
+  getSkippedPluginEntries,   // Manifest entries downloadPlugin does not download, with the reason
   downloadPlugin,            // Download a plugin item by item
-  KIND_TO_CATEGORY,          // { instruction: 'instructions', prompt: 'prompts', agent: 'agents', skill: 'skills' }
-  PLUGIN_JSON_RELATIVE_PATH, // '.github/plugin/plugin.json'
+  KIND_TO_CATEGORY,          // { instruction: 'instructions', prompt: 'prompts', agent: 'agents', skill: 'skills', hook: 'hooks' }
+  PLUGIN_MANIFEST_PATHS,     // ['plugin.json', '.github/plugin/plugin.json']
+  AWESOME_COPILOT_NAMESPACE, // 'com.github.awesome-copilot'
 } from 'cmd-git-copilot-tools';
 
-const { metadata } = await parsePluginJson(source, 'plugins/sample-plugin', token);
-metadata.items; // [{ path: 'plugins/sample-plugin/agents', kind: 'agent' }, ...]
+const { metadata, manifestPath } = await parsePluginJson(source, 'plugins/sample-plugin', token);
+manifestPath;   // 'plugins/sample-plugin/plugin.json'
+metadata.items; // [{ path: 'agents/helper.agent.md', kind: 'agent' }, { path: 'skills/my-skill', kind: 'skill' }]
 
 const result = await downloadPlugin(pluginItem, workspaceFolder, token);
-result.downloaded;    // ['agent: agents/ (2 files)', 'skill: my-skill (3 files)']
-result.failed;        // ['plugins/sample-plugin/prompts/missing.prompt.md (Path ... not found ...)']
-result.notices;       // problems copying the plugin's own files, if any
+result.downloaded;    // ['agent: helper.agent.md', 'skill: my-skill (3 files)']
+result.failed;        // ['skills/missing-skill (Path ... not found ...)']
+result.notices;       // ['./extensions/sample-board (Copilot extension, not downloaded)']
 result.pluginDir;     // <workspace>/.github/plugins/sample-plugin
 result.readmeContent; // the plugin README, or ''
 ```
 
+`parsePluginJson` looks for the manifest at each of `PLUGIN_MANIFEST_PATHS` in turn, so a plugin folder with `plugin.json` at its root takes one request.
+
 Manifest layouts:
 
-| Layout | Shape |
-| --- | --- |
-| Current | `agents`, `skills`, `instructions` and `prompts` arrays of paths relative to the plugin folder (`./agents`, `./skills/name`) |
-| Legacy | an `items` array of `{ path, kind }` objects with repository paths |
+| Layout | Where the items are listed | How a path is resolved |
+| --- | --- | --- |
+| Agent Plugins | `agents`, `skills`, and `hooks` under `extensions["com.github.awesome-copilot"]` | From the repository root: `./agents/<name>.md` is `agents/<name>.agent.md`, `./skills/<name>/` is `skills/<name>`, and `./hooks/<name>/` is `hooks/<name>` |
+| Plugin-relative | top-level `agents`, `skills`, `instructions`, and `prompts` arrays | From the plugin folder: `./agents` is `<plugin folder>/agents` |
+| Legacy | a top-level `items` array of `{ path, kind }` objects | Paths are already repository paths |
 
-After parsing, `items` always holds the normalized list and `id` falls back to the plugin folder name. A manifest without a name, a description, or any item list throws an `Error` whose message starts with `Invalid plugin.json format`; `parsePluginJson` prefixes it with `Failed to parse plugin.json:` and lets a `GitHubApiError` through unchanged.
+After parsing, `items` always holds the normalized list and `id` falls back to the plugin folder name. Copilot extensions (the `extensions` entries of the awesome-copilot section) and Agent Plugins entries in any other shape are left out of `items`; `getSkippedPluginEntries` lists them, and `downloadPlugin` reports them in `notices`.
+
+A manifest without a name, a description, or any item list throws an `Error` whose message starts with `Invalid plugin.json format`. `parsePluginJson` prefixes it with `Failed to parse plugin.json:`, reports a folder without a manifest the same way, and lets any other `GitHubApiError` through unchanged.
 
 What `downloadPlugin` writes, relative to the A.I. folder:
 
 | Item | Destination |
 | --- | --- |
-| `agent`, `instruction` or `prompt` file | `<category>/<file name>` |
-| `agent`, `instruction` or `prompt` folder reference (no extension) | every file below it, flat, into `<category>/` |
-| `skill` | `skills/<folder name>/`, replaced whole |
-| the plugin's own `agents/`, `commands/` and `README.md` | `plugins/<id>/` |
-| the manifest | `plugins/<id>/.github/plugin/plugin.json` |
+| `agent`, `instruction`, or `prompt` file | `<category>/<file name>` |
+| `agent`, `instruction`, or `prompt` folder reference (no extension) | every file below it, flat, into `<category>/` |
+| `skill` or `hook` | `<category>/<folder name>/`, replaced whole |
+| the manifest | `plugins/<id>/`, at the same place inside the folder as in the repository |
+| the plugin's other top-level files, `agents/`, and `commands/` | `plugins/<id>/` |
 
 One failing item does not stop the others; it is reported in `failed`.
 
@@ -594,7 +602,7 @@ import type {
   RequestOptions,      // configureRequests() argument: timeoutMs, allowInsecureEnterpriseCerts
   PluginMetadata,      // Parsed plugin manifest
   PluginItem,          // One manifest entry: path and kind
-  PluginItemKind,      // 'instruction' | 'prompt' | 'agent' | 'skill'
+  PluginItemKind,      // 'instruction' | 'prompt' | 'agent' | 'skill' | 'hook'
   PluginParseResult,   // metadata plus the raw manifest text
   PluginDownloadResult, // What downloadPlugin wrote, failed on, and read
   // Error types:
@@ -613,7 +621,8 @@ import type {
   DOWNLOAD_PATHS,      // Record<ToolCategory, string> — default .github/ paths
   DEFAULT_AI_FOLDER,   // '.github'
   KIND_TO_CATEGORY,    // Record<PluginItemKind, ToolCategory>
-  PLUGIN_JSON_RELATIVE_PATH, // '.github/plugin/plugin.json'
+  PLUGIN_MANIFEST_PATHS,     // ['plugin.json', '.github/plugin/plugin.json']
+  AWESOME_COPILOT_NAMESPACE, // 'com.github.awesome-copilot'
 } from 'cmd-git-copilot-tools';
 ```
 

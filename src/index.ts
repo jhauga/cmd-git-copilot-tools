@@ -85,10 +85,12 @@ export type {
   PluginDownloadResult,
 } from './engine/plugin.js';
 export {
-  PLUGIN_JSON_RELATIVE_PATH,
+  PLUGIN_MANIFEST_PATHS,
+  AWESOME_COPILOT_NAMESPACE,
   KIND_TO_CATEGORY,
   parsePluginMetadata,
   parsePluginJson,
+  getSkippedPluginEntries,
   downloadPlugin,
 } from './engine/plugin.js';
 
