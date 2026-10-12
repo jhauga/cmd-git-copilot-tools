@@ -2,7 +2,7 @@
 
 `cmd-git-copilot-tools` is structured as a modular engine with a thin CLI layer on top. The engine modules have no dependency on the terminal UI or Node.js stdin/stdout, which means they can be imported and used as the backend for an editor extension, a language server, a web service, or any other host that needs to fetch and download GitHub Copilot customizations.
 
-This tool was ported from [jhauga/vscode-git-copilot-tools](https://github.com/jhauga/vscode-git-copilot-tools), a VS Code extension with the same goals. The engine API design is based on that extension's internal logic, extracted and generalized so it can power any host — including a new editor extension.
+This tool began as a port of [jhauga/vscode-git-copilot-tools](https://github.com/jhauga/vscode-git-copilot-tools), a VS Code extension with the same goals, and is now that extension's upstream engine. The extension depends on this package for fetching, searching, folder mapping, and downloading, and keeps only its host-specific views, settings, and authentication.
 
 ---
 
@@ -144,9 +144,9 @@ Fetches tool listings from GitHub repository contents API. Handles auth, caching
 import {
   fetchAllToolsFromSources, // Fetch all categories from one or more sources
   fetchCategory,            // Fetch a single category from a source
-  getToken,                 // Resolve auth token (env var → config → undefined)
+  getToken,                 // Resolve auth token (see Authentication below)
   fetchDirectoryTree,       // List entries in a repository folder
-} from 'cmd-git-copilot-tools/src/engine/github.js';
+} from 'cmd-git-copilot-tools';
 
 // Example: fetch all tools
 const config = loadConfig();
@@ -160,7 +160,7 @@ const items = await fetchAllToolsFromSources(config.sources, token, config.cache
 interface CopilotItem {
   id: string;
   name: string;
-  category: 'agents' | 'hooks' | 'instructions' | 'plugins' | 'prompts' | 'skills' | 'workflows';
+  category: 'agents' | 'cookbook' | 'hooks' | 'instructions' | 'plugins' | 'prompts' | 'skills' | 'workflows';
   repo: RepositorySource;
   file: {
     name: string;
@@ -179,11 +179,15 @@ For a category mapped to an array of folders, `fetchCategory` lists every folder
 
 #### Authentication
 
-Token resolution order:
+Token resolution order for `getToken`:
 
-1. `GITHUB_TOKEN` environment variable (5,000 req/hr)
-2. `config.enterpriseToken` from config file (for Enterprise GitHub)
-3. Unauthenticated (60 req/hr)
+1. `GITHUB_TOKEN` environment variable
+2. `GH_TOKEN` environment variable
+3. The GitHub CLI token (`gh auth token`), when `gh` is installed and signed in
+4. `config.enterpriseToken`, for a source with a `baseUrl` (GitHub Enterprise)
+5. Unauthenticated
+
+Authenticated requests are limited to 5,000 per hour; unauthenticated requests are limited to 60 per hour.
 
 ---
 
@@ -196,9 +200,8 @@ import {
   searchTools,       // Search items by query string (supports category prefixes)
   filterByCategory,  // Filter to a single category
   groupByCategory,   // Group items into a Map<ToolCategory, CopilotItem[]>
-  groupBySource,     // Group items by repository source
   findByCode,        // Resolve a download code ('a1', 'pl2', '3') to an item
-} from 'cmd-git-copilot-tools/src/engine/search.js';
+} from 'cmd-git-copilot-tools';
 
 // Examples
 const agents = filterByCategory(items, 'agents');
@@ -221,6 +224,7 @@ const item = findByCode(items, 'a1', 'all');        // first agent in 'all' view
 | Label | Category |
 | --- | --- |
 | `a` | `agents` |
+| `ck` | `cookbook` |
 | `h` | `hooks` |
 | `i` | `instructions` |
 | `pl` | `plugins` |
@@ -241,7 +245,7 @@ import {
   resolveItemsByName,   // Resolve one name or folder/name to the items it would download
   downloadFile,         // Download a raw URL to a specific path
   getFileSizeDisplay,   // Format bytes as '1.5KB', '2.0MB', etc.
-} from 'cmd-git-copilot-tools/src/engine/download.js';
+} from 'cmd-git-copilot-tools';
 
 // Example: download an item into the current workspace folder
 const meta = await downloadItem(item, workspaceFolder, token);
@@ -372,7 +376,7 @@ When an array includes the root, the root listing skips entries named after the 
 A singleton TTL cache keyed by repository and path. Used internally by `github.ts` but accessible if you need to control caching behavior.
 
 ```typescript
-import { cache } from 'cmd-git-copilot-tools/src/engine/cache.js';
+import { cache } from 'cmd-git-copilot-tools';
 
 cache.clear();                // Clear all cached data
 cache.clearRepo(source);      // Clear cache for a specific repository source
@@ -386,18 +390,21 @@ The following example shows how a VS Code extension could use the engine as its 
 
 ```typescript
 import * as vscode from 'vscode';
-import { loadConfig } from 'cmd-git-copilot-tools/src/engine/config.js';
-import { fetchAllToolsFromSources, getToken } from 'cmd-git-copilot-tools/src/engine/github.js';
-import { filterByCategory, searchTools } from 'cmd-git-copilot-tools/src/engine/search.js';
-import { downloadItem } from 'cmd-git-copilot-tools/src/engine/download.js';
-import type { CopilotItem } from 'cmd-git-copilot-tools/src/types.js';
+import { downloadItem, fetchAllToolsFromSources, searchTools } from 'cmd-git-copilot-tools';
+import type { RepositorySource } from 'cmd-git-copilot-tools';
 
 export async function activate(context: vscode.ExtensionContext) {
-  const config = loadConfig();
-  const token = getToken(undefined, config.enterpriseToken);
+  // Sources and cache lifetime come from the extension's own settings
+  const settings = vscode.workspace.getConfiguration('myExtension');
+  const sources = settings.get<RepositorySource[]>('repositories', []);
+  const cacheTimeout = settings.get<number>('cacheTimeout', 3600000);
+
+  // The token comes from VS Code's GitHub sign-in (undefined when signed out)
+  const session = await vscode.authentication.getSession('github', ['repo'], { silent: true });
+  const token = session?.accessToken;
 
   // Fetch all tools once (cached for cacheTimeout ms)
-  const items = await fetchAllToolsFromSources(config.sources, token, config.cacheTimeout);
+  const items = await fetchAllToolsFromSources(sources, token, cacheTimeout);
 
   // Show a quick pick to search and select a tool
   context.subscriptions.push(
@@ -433,8 +440,8 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 ```
 
-> **Note:** This engine was designed to be host-agnostic. The VS Code extension
-> [jhauga/vscode-git-copilot-tools](https://github.com/jhauga/vscode-git-copilot-tools) was the original implementation that this CLI tool was ported from. It was not built using this engine, but a future VS Code extension *could* use this engine as its backend, as shown above.
+> **Note:** This is the integration pattern the [Git Copilot Tools](https://github.com/jhauga/vscode-git-copilot-tools)
+> VS Code extension uses. Host concerns such as settings, sign-in, and progress UI stay in the extension, while fetching, searching, and downloading come from this package. Inside an extension host, pass sources and the token in explicitly instead of calling `loadConfig` or `getToken`: `loadConfig` reads the command-line tool's per-user config file, and `getToken` reads environment variables and runs the `gh` CLI.
 
 ---
 
@@ -444,7 +451,7 @@ All shared types are in `src/types.ts`:
 
 ```typescript
 import type {
-  ToolCategory,        // 'agents' | 'instructions' | 'plugins' | 'prompts' | 'skills' | 'workflows'
+  ToolCategory,        // 'agents' | 'cookbook' | 'hooks' | 'instructions' | 'plugins' | 'prompts' | 'skills' | 'workflows'
   RepositorySource,    // Config entry for a GitHub repository
   GitHubFileEntry,     // Raw GitHub API file/directory entry
   CopilotItem,         // A fetchable/downloadable tool
@@ -466,11 +473,13 @@ import type {
   ORDERED_CATEGORIES,  // ToolCategory[] in display order
   DOWNLOAD_PATHS,      // Record<ToolCategory, string> — default .github/ paths
   DEFAULT_AI_FOLDER,   // '.github'
-} from 'cmd-git-copilot-tools/src/types.js';
+} from 'cmd-git-copilot-tools';
 ```
 
 ---
 
-## Origin
+## Origin and Consumers
 
-This engine is a port of the core logic from [jhauga/vscode-git-copilot-tools](https://github.com/jhauga/vscode-git-copilot-tools), a VS Code extension for browsing and downloading GitHub Copilot customizations. The engine was extracted, generalized, and restructured as a standalone module so it can be used in any host environment.
+This engine began as a port of the core logic from [jhauga/vscode-git-copilot-tools](https://github.com/jhauga/vscode-git-copilot-tools), a VS Code extension for browsing and downloading GitHub Copilot customizations. The engine was extracted, generalized, and restructured as a standalone module so it can be used in any host environment.
+
+The extension has since adopted this package as a dependency, which makes this repository the single source of truth for the shared logic. Fixes and features are released here once and reach the extension through a dependency update. Changes to the extension's own interface, such as views, commands, and settings, are still made in the extension.

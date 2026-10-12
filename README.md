@@ -4,7 +4,7 @@
 
 A command-line tool that allows you to browse, preview, and download GitHub Copilot customizations. The default repository is [github/awesome-copilot](https://github.com/github/awesome-copilot), but other repositories with Copilot `agent`, `cookbook`, `hook`, `instruction`, `plugin`, `prompt`, `skill`, and `workflow` tools can be used.
 
-This tool is a command-line port of [jhauga/vscode-git-copilot-tools](https://github.com/jhauga/vscode-git-copilot-tools). The core engine is host-agnostic and can be used as a backend for editor extensions — see [docs/api.md](docs/api.md).
+This tool began as a command-line port of the [jhauga/vscode-git-copilot-tools](https://github.com/jhauga/vscode-git-copilot-tools) VS Code extension and is now its upstream engine. The extension depends on this package for fetching, searching, folder mapping, and downloading, so that logic is maintained and released here and reaches the extension as a dependency update. The engine is host-agnostic and can back other editor extensions and services as well; see [docs/api.md](docs/api.md).
 
 ## Install
 
@@ -639,7 +639,7 @@ npm run test:search:log
 
 ### Engine API
 
-The `src/engine/` modules are host-agnostic and can be used as a backend for editor extensions or other tools. See [docs/api.md](docs/api.md) for the full engine API reference and a VS Code extension example.
+The `src/engine/` modules are host-agnostic and can be used as a backend for editor extensions or other tools. The [Git Copilot Tools](https://github.com/jhauga/vscode-git-copilot-tools) VS Code extension consumes them through this package, so engine changes are made here rather than in the extension. See [docs/api.md](docs/api.md) for the full engine API reference and a VS Code extension example.
 
 **Enjoy browsing and using awesome GitHub Copilot customization tools!**
 
