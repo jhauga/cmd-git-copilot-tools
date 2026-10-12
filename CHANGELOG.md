@@ -5,9 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0-beta.1.1.0] - 2026-10-09
+## [2.0.0] - 2026-10-12
 
 ### Added
+
+#### Download Location
+
+- Added the `aiFolder` property, which sets the parent folder downloaded tools are organized under (default: `.github`)
+  - Configurable per source, so one repository can download to a different folder than the rest
+  - Configurable globally through the config file and the `--set-default` command
+- Added the `-f, --folder <path>` option, which sets the A.I. folder for a single run and bypasses every configured default
+  - The only place an absolute path is accepted
+  - Works with named downloads and with the interactive browser
+- Added the `folder=` qualifier to `--set-default`, which saves the default A.I. folder
+  - `--set-default folder=.claude` makes `.claude/` the default instead of `.github/`
+  - The qualifier is strict: only the exact word `folder` followed by `=` is read as a folder, so `--set-default <url|label>` keeps its original meaning
+- Added `AbsoluteFolderPathError`, raised when an absolute path is given to the saved default. Absolute paths are detected in POSIX, Windows drive, UNC, and home-anchored forms on every platform
+- Added `--list-source` output for the default A.I. folder and for any source that overrides it
 
 #### Folder Mappings
 
@@ -27,59 +41,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Programmatic API
 
+- Added the `engine/folder.ts` module, exporting `isAbsolutePath`, `normalizeAiFolder`, `resolveAiFolder`, and `resolveCategoryDir`
 - Added the `engine/mapping.ts` module, exporting `normalizeMappedFolder`, `getMappedFolders`, `parseToolReference`, `formatToolReference`, `getItemFolder`, `getItemDisplayName`, and the `ToolReference` type
+- Added the `DownloadOptions` argument to `downloadItem` and `downloadItemsByName`, carrying `folderOverride` and `configFolder`
 - Added `resolveItemsByName` to the download module, which resolves one name or `folder/name` to the items it would download
+- Added `setDefaultFolder` to the config module, and the `DEFAULT_AI_FOLDER` constant
 - Added the optional `mappedFolder` property to `CopilotItem`, set on items listed from an array mapping
 
 #### Tests
 
+- Added the `folder` test suite covering absolute path detection, folder normalization, resolution precedence, path composition, the `--set-default` qualifier, and the absolute path rejection (`--test:folder`, `npm run test:folder`)
 - Added the `mapping` test suite covering folder normalization, array parsing, folder-qualified names, ordered listing, root handling, and name resolution, run offline against a seeded cache (`--test:mapping`, `npm run test:mapping`)
+- Added an integration case that downloads into a custom A.I. folder and verifies the destination
 - Added config-argument parser cases for array values
 
 ### Changed
 
+- Download paths are now resolved at download time rather than read from a fixed table. `DOWNLOAD_PATHS` remains exported and still describes the default `.github` layout
 - `FolderMappingValue` now includes `string[]`
 - Items listed from an array mapping use their full repository path in `id`, so two folders can hold a tool with the same name
 - The invalid config-argument message lists `hooks` as a valid category and describes array values
-
-## [2.0.0-beta.1] - 2026-09-03
-
-### Added
-
-#### Download Location
-
-- Added the `aiFolder` property, which sets the parent folder downloaded tools are organized under (default: `.github`)
-  - Configurable per source, so one repository can download to a different folder than the rest
-  - Configurable globally through the config file and the `--set-default` command
-- Added the `-f, --folder <path>` option, which sets the A.I. folder for a single run and bypasses every configured default
-  - The only place an absolute path is accepted
-  - Works with named downloads and with the interactive browser
-- Added the `folder=` qualifier to `--set-default`, which saves the default A.I. folder
-  - `--set-default folder=.claude` makes `.claude/` the default instead of `.github/`
-  - The qualifier is strict: only the exact word `folder` followed by `=` is read as a folder, so `--set-default <url|label>` keeps its original meaning
-- Added `AbsoluteFolderPathError`, raised when an absolute path is given to the saved default. Absolute paths are detected in POSIX, Windows drive, UNC, and home-anchored forms on every platform
-- Added `--list-source` output for the default A.I. folder and for any source that overrides it
-
-#### Programmatic API
-
-- Added the `engine/folder.ts` module, exporting `isAbsolutePath`, `normalizeAiFolder`, `resolveAiFolder`, and `resolveCategoryDir`
-- Added the `DownloadOptions` argument to `downloadItem` and `downloadItemsByName`, carrying `folderOverride` and `configFolder`
-- Added `setDefaultFolder` to the config module, and the `DEFAULT_AI_FOLDER` constant
-
-#### Tests
-
-- Added the `folder` test suite covering absolute path detection, folder normalization, resolution precedence, path composition, the `--set-default` qualifier, and the absolute path rejection (`--test:folder`, `npm run test:folder`)
-- Added an integration case that downloads into a custom A.I. folder and verifies the destination
-
-### Changed
-
-- Download paths are now resolved at download time rather than read from a fixed table. `DOWNLOAD_PATHS` remains exported and still describes the default `.github` layout
 - The integration test resolves expected download paths the same way the downloader does, so a source with its own `aiFolder` no longer breaks the assertions
+
+#### Documentation
+
+- The README, the engine API guide, and the package description describe the Git Copilot Tools VS Code extension as a consumer of this package's engine
+- The engine API guide's editor extension example takes sources from the extension's settings and the token from VS Code sign-in, instead of the command-line tool's config file and token lookup
 
 ### Fixed
 
 - The `User-Agent` header sent to the GitHub API reports the package version instead of a hardcoded `1.0.0`
 - `loadPermissions` no longer throws `ReferenceError: __BUILD_ID__ is not defined` when the package is imported as a library. The build ID is now defined for the library bundle as well as the CLI bundle
+- Engine API guide examples import from the package root. The `cmd-git-copilot-tools/src/...` paths they used are not exposed by the package `exports` map and failed to resolve
+- The engine API guide lists the full token lookup order (`GITHUB_TOKEN`, `GH_TOKEN`, the GitHub CLI, then the enterprise token) and the `cookbook` category
 
 ## [1.2.0] - 2026-06-12
 
@@ -196,6 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Log level: info
 - Check for updates: enabled
 
-[1.2.0]: https://github.com/jhauga/cmd-git-copilot-tools/releases/tag/v1.2.0
-[1.1.0]: https://github.com/jhauga/cmd-git-copilot-tools/releases/tag/v1.1.0
-[1.0.0]: https://github.com/jhauga/cmd-git-copilot-tools/releases/tag/v1.0.0
+[2.0.0]: https://www.npmjs.com/package/cmd-git-copilot-tools/v/2.0.0
+[1.2.0]: https://www.npmjs.com/package/cmd-git-copilot-tools/v/1.2.0
+[1.1.0]: https://www.npmjs.com/package/cmd-git-copilot-tools/v/1.1.0
+[1.0.0]: https://www.npmjs.com/package/cmd-git-copilot-tools/v/1.0.0
