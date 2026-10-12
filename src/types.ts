@@ -227,3 +227,29 @@ export class AbsoluteFolderPathError extends Error {
     this.name = 'AbsoluteFolderPathError';
   }
 }
+
+/**
+ * A GitHub response with a failing status. `status` is the HTTP status and
+ * `url` the request. The rate-limit fields come from the `x-ratelimit-remaining`
+ * and `x-ratelimit-reset` headers when GitHub sends them.
+ */
+export class GitHubApiError extends Error {
+  readonly status: number;
+  readonly url: string;
+  readonly rateLimitRemaining?: number;
+  readonly rateLimitReset?: Date;
+
+  constructor(message: string, status: number, url: string, rateLimit: { remaining?: number; reset?: Date } = {}) {
+    super(message);
+    this.name = 'GitHubApiError';
+    this.status = status;
+    this.url = url;
+    this.rateLimitRemaining = rateLimit.remaining;
+    this.rateLimitReset = rateLimit.reset;
+  }
+
+  /** True when the request was refused because the API rate limit is used up. */
+  get isRateLimit(): boolean {
+    return this.status === 429 || (this.status === 403 && this.rateLimitRemaining === 0);
+  }
+}

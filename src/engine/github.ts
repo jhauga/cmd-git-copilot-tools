@@ -1,14 +1,76 @@
 import { spawnSync } from 'child_process';
+import { Agent, fetch as undiciFetch } from 'undici';
 import type { CopilotItem, GitHubFileEntry, RepositorySource, ToolCategory } from '../types.js';
-import { ORDERED_CATEGORIES } from '../types.js';
+import { GitHubApiError, ORDERED_CATEGORIES } from '../types.js';
 import { cache, buildCacheKey } from './cache.js';
-import { getMappedFolders } from './mapping.js';
+import { resolveCategoryPaths } from './mapping.js';
 
 declare const __PKG_VERSION__: string;
 
 const USER_AGENT = `cmd-git-copilot-tools/${__PKG_VERSION__}`;
 const GITHUB_API_VERSION = '2022-11-28';
 const DEFAULT_CACHE_TTL = 10000; // 10 seconds for directory listings
+const DEFAULT_TIMEOUT_MS = 15000;
+
+/** Hosts that keep certificate validation whatever the request options say. */
+const PUBLIC_GITHUB_HOSTS = new Set(['github.com', 'api.github.com', 'raw.githubusercontent.com']);
+
+export interface RequestOptions {
+  /**
+   * Skip TLS certificate validation for GitHub Enterprise hosts. Requests to
+   * github.com and its subdomains always validate certificates. Off by default.
+   */
+  allowInsecureEnterpriseCerts?: boolean;
+  /** Time one request may take before it is aborted, in milliseconds (default: 15000). */
+  timeoutMs?: number;
+}
+
+const requestOptions: Required<RequestOptions> = {
+  allowInsecureEnterpriseCerts: false,
+  timeoutMs: DEFAULT_TIMEOUT_MS,
+};
+
+let insecureAgent: Agent | undefined;
+
+/**
+ * Set the request options used by every later call in this process. Options
+ * that are omitted keep their current value.
+ */
+export function configureRequests(options: RequestOptions): void {
+  if (options.allowInsecureEnterpriseCerts !== undefined) {
+    requestOptions.allowInsecureEnterpriseCerts = options.allowInsecureEnterpriseCerts;
+  }
+  if (options.timeoutMs !== undefined && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
+    requestOptions.timeoutMs = options.timeoutMs;
+  }
+}
+
+/** A copy of the request options in effect. */
+export function getRequestOptions(): Required<RequestOptions> {
+  return { ...requestOptions };
+}
+
+/**
+ * The dispatcher that skips certificate validation for `url`, or undefined
+ * when the request keeps the default validation: the option is off, the host
+ * belongs to github.com, or the URL cannot be parsed.
+ */
+export function buildDispatcher(url: string): Agent | undefined {
+  if (!requestOptions.allowInsecureEnterpriseCerts) {return undefined;}
+
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+  if (PUBLIC_GITHUB_HOSTS.has(host) || host.endsWith('.github.com') || host.endsWith('.githubusercontent.com')) {
+    return undefined;
+  }
+
+  insecureAgent ??= new Agent({ connect: { rejectUnauthorized: false } });
+  return insecureAgent;
+}
 
 export function buildApiUrl(repo: RepositorySource, repoPath: string): string {
   const base = repo.baseUrl
@@ -54,15 +116,73 @@ function buildHeaders(token?: string): Record<string, string> {
   return headers;
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 15000): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), requestOptions.timeoutMs);
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
-    return response;
+    const dispatcher = buildDispatcher(url);
+    if (dispatcher) {
+      const insecureInit = { ...init, signal: controller.signal, dispatcher } as unknown as Parameters<typeof undiciFetch>[1];
+      const response = await undiciFetch(url, insecureInit);
+      return response as unknown as Response;
+    }
+    return await fetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** GET `url`, turning a timeout into an error that names what was requested. */
+async function request(url: string, init: RequestInit, target: string): Promise<Response> {
+  try {
+    return await fetchWithTimeout(url, init);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Request timed out for ${target}.`);
+    }
+    throw error;
+  }
+}
+
+function describePath(repo: RepositorySource, repoPath: string): string {
+  return `${repo.owner}/${repo.repo} path '${repoPath}'`;
+}
+
+function parseHeaderInt(value: string | null): number | undefined {
+  if (value === null) {return undefined;}
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function readRateLimit(response: Response): { remaining?: number; reset?: Date } {
+  const remaining = parseHeaderInt(response.headers.get('x-ratelimit-remaining'));
+  const resetSeconds = parseHeaderInt(response.headers.get('x-ratelimit-reset'));
+  return {
+    remaining,
+    reset: resetSeconds === undefined ? undefined : new Date(resetSeconds * 1000),
+  };
+}
+
+function handleGitHubError(response: Response, repo: RepositorySource, repoPath: string, url: string): never {
+  const status = response.status;
+  const repoRef = `${repo.owner}/${repo.repo}`;
+  const rateLimit = readRateLimit(response);
+  const fail = (message: string): GitHubApiError => new GitHubApiError(message, status, url, rateLimit);
+
+  if (status === 401) {
+    throw fail(`Authentication failed for ${repoRef}. Set GITHUB_TOKEN environment variable or configure an enterprise token.`);
+  }
+  if (status === 429 || (status === 403 && rateLimit.remaining === 0)) {
+    const resetTime = rateLimit.reset ? ` Resets at ${rateLimit.reset.toLocaleTimeString()}.` : '';
+    throw fail(`GitHub API rate limit exceeded for ${repoRef}.${resetTime} Set GITHUB_TOKEN for higher limits.`);
+  }
+  if (status === 403) {
+    throw fail(`Access forbidden to ${repoRef}. Check your token permissions.`);
+  }
+  if (status === 404) {
+    throw fail(`Path '${repoPath}' not found in ${repoRef}. The folder may not exist.`);
+  }
+  throw fail(`GitHub API error (${status}): ${response.statusText}`);
 }
 
 export async function getDirectoryContents(
@@ -76,70 +196,127 @@ export async function getDirectoryContents(
   if (cached) {return cached;}
 
   const url = buildApiUrl(repo, repoPath);
-  try {
-    const response = await fetchWithTimeout(url, { headers: buildHeaders(token) });
-    if (!response.ok) {
-      handleGitHubError(response, repo, repoPath);
-    }
-    const json = await response.json() as GitHubFileEntry[] | GitHubFileEntry;
-    const data = Array.isArray(json) ? json : [json];
-    cache.set(cacheKey, data, ttl);
-    return data;
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Request timed out for ${repo.owner}/${repo.repo} path '${repoPath}'.`);
-    }
-    throw error;
+  const response = await request(url, { headers: buildHeaders(token) }, describePath(repo, repoPath));
+  if (!response.ok) {
+    handleGitHubError(response, repo, repoPath, url);
   }
+  const json = await response.json() as GitHubFileEntry[] | GitHubFileEntry;
+  const data = Array.isArray(json) ? json : [json];
+  cache.set(cacheKey, data, ttl);
+  return data;
+}
+
+/**
+ * Every entry below `repoPath`, listed folder by folder: a folder's own
+ * entries come first, followed by the entries of each subfolder in turn.
+ */
+export async function listDirectoryTree(
+  repo: RepositorySource,
+  repoPath: string,
+  token?: string,
+  ttl = DEFAULT_CACHE_TTL
+): Promise<GitHubFileEntry[]> {
+  const entries = await getDirectoryContents(repo, repoPath, token, ttl);
+  const subtrees = await Promise.all(
+    entries
+      .filter(entry => entry.type === 'dir')
+      .map(entry => listDirectoryTree(repo, entry.path, token, ttl))
+  );
+  return entries.concat(...subtrees);
+}
+
+/**
+ * Whether `repoPath` exists in the repository. A cached listing or file
+ * answers without a request. A 404 answers false; other failures throw.
+ */
+export async function pathExists(repo: RepositorySource, repoPath: string, token?: string): Promise<boolean> {
+  const cacheKey = buildCacheKey(repo, repoPath);
+  if (cache.get(cacheKey) !== undefined || cache.get(fileCacheKey(repo, repoPath)) !== undefined) {
+    return true;
+  }
+
+  const url = buildApiUrl(repo, repoPath);
+  const response = await request(url, { headers: buildHeaders(token) }, describePath(repo, repoPath));
+  if (response.ok) {
+    // Keep the listing when the path is a folder, so the next listing call is free.
+    const json = await response.json() as GitHubFileEntry[] | GitHubFileEntry;
+    if (Array.isArray(json)) {
+      cache.set(cacheKey, json, DEFAULT_CACHE_TTL);
+    }
+    return true;
+  }
+  if (response.status === 404) {
+    await response.arrayBuffer().catch(() => undefined);
+    return false;
+  }
+  return handleGitHubError(response, repo, repoPath, url);
+}
+
+export interface GitHubFileContent {
+  content: string;
+  download_url: string | null;
+  sha: string;
+  size: number;
+}
+
+type ContentsApiFile = GitHubFileEntry & { content?: string; encoding?: string };
+
+function fileCacheKey(repo: RepositorySource, filePath: string): string {
+  return `${buildCacheKey(repo, filePath)}#file`;
+}
+
+/**
+ * Read one file through the contents API. Files up to 1 MB arrive inline and
+ * are decoded; larger files are fetched from their download URL.
+ */
+export async function getFileContentByPath(
+  repo: RepositorySource,
+  filePath: string,
+  token?: string,
+  ttl = DEFAULT_CACHE_TTL
+): Promise<GitHubFileContent> {
+  const cacheKey = fileCacheKey(repo, filePath);
+  const cached = cache.get<GitHubFileContent>(cacheKey);
+  if (cached) {return cached;}
+
+  const url = buildApiUrl(repo, filePath);
+  const response = await request(url, { headers: buildHeaders(token) }, describePath(repo, filePath));
+  if (!response.ok) {
+    handleGitHubError(response, repo, filePath, url);
+  }
+  const data = await response.json() as ContentsApiFile | ContentsApiFile[];
+  if (Array.isArray(data) || data.type !== 'file') {
+    throw new Error(`Path '${filePath}' in ${repo.owner}/${repo.repo} is not a file.`);
+  }
+
+  let content: string;
+  if (typeof data.content === 'string' && data.content !== '') {
+    const encoding = data.encoding === 'utf-8' ? 'utf-8' : 'base64';
+    content = Buffer.from(data.content, encoding).toString('utf-8');
+  } else if (data.download_url) {
+    content = await getFileContent(data.download_url, token);
+  } else {
+    throw new Error(`Path '${filePath}' in ${repo.owner}/${repo.repo} has no content.`);
+  }
+
+  const result: GitHubFileContent = { content, download_url: data.download_url, sha: data.sha, size: data.size };
+  cache.set(cacheKey, result, ttl);
+  return result;
 }
 
 export async function getFileContent(downloadUrl: string, token?: string): Promise<string> {
   const headers = buildHeaders(token);
   headers['Accept'] = 'application/vnd.github.raw+json';
-  const response = await fetchWithTimeout(downloadUrl, { headers });
+  const response = await request(downloadUrl, { headers }, downloadUrl);
   if (!response.ok) {
-    throw new Error(`Failed to fetch file content (${response.status}): ${response.statusText}`);
-  }
-  return response.text();
-}
-
-function handleGitHubError(response: Response, repo: RepositorySource, repoPath: string): never {
-  const status = response.status;
-  const repoRef = `${repo.owner}/${repo.repo}`;
-  if (status === 401) {
-    throw new Error(
-      `Authentication failed for ${repoRef}. Set GITHUB_TOKEN environment variable or configure an enterprise token.`
+    throw new GitHubApiError(
+      `Failed to fetch file content (${response.status}): ${response.statusText}`,
+      response.status,
+      downloadUrl,
+      readRateLimit(response)
     );
   }
-  if (status === 403) {
-    const rateLimitReset = response.headers.get('x-ratelimit-reset');
-    if (rateLimitReset) {
-      const resetTime = new Date(parseInt(rateLimitReset) * 1000).toLocaleTimeString();
-      throw new Error(`GitHub API rate limit exceeded for ${repoRef}. Resets at ${resetTime}. Set GITHUB_TOKEN for higher limits.`);
-    }
-    throw new Error(`Access forbidden to ${repoRef}. Check your token permissions.`);
-  }
-  if (status === 404) {
-    throw new Error(`Path '${repoPath}' not found in ${repoRef}. The folder may not exist.`);
-  }
-  throw new Error(`GitHub API error (${status}): ${response.statusText}`);
-}
-
-function getCategoryPath(repo: RepositorySource, category: ToolCategory): string | null {
-  if (!repo.folderMappings) {
-    return category;
-  }
-  const mapping = repo.folderMappings[category];
-  if (mapping === null || Array.isArray(mapping)) {
-    return null; // excluded (array mappings are listed by fetchMappedFolders)
-  }
-  if (mapping === undefined) {
-    return category; // default path
-  }
-  if (mapping === 'root') {
-    return ''; // entire root
-  }
-  return mapping;
+  return response.text();
 }
 
 function hasRootMapping(repo: RepositorySource): ToolCategory | null {
@@ -161,7 +338,7 @@ async function listCategoryEntries(
   } catch (err) {
     // Only silently skip "path not found" (404) errors — category folder may not exist in this repo.
     // Re-throw rate-limit, auth, network, and other errors so callers can surface them.
-    if (err instanceof Error && /not found/i.test(err.message)) {
+    if (err instanceof GitHubApiError && err.status === 404) {
       return [];
     }
     throw err;
@@ -241,15 +418,14 @@ export async function fetchCategory(
   token?: string,
   cacheTtl = DEFAULT_CACHE_TTL
 ): Promise<CopilotItem[]> {
-  const folders = getMappedFolders(repo.folderMappings?.[category]);
-  if (folders) {
-    return fetchMappedFolders(repo, category, folders, token, cacheTtl);
+  const paths = resolveCategoryPaths(repo, category);
+  if (paths.length === 0) {return [];} // excluded
+
+  if (Array.isArray(repo.folderMappings?.[category])) {
+    return fetchMappedFolders(repo, category, paths, token, cacheTtl);
   }
 
-  const repoPath = getCategoryPath(repo, category);
-  if (repoPath === null) {return [];} // excluded
-
-  const entries = await listCategoryEntries(repo, repoPath, token, cacheTtl);
+  const entries = await listCategoryEntries(repo, paths[0]!, token, cacheTtl);
   return toCopilotItems(repo, category, entries);
 }
 

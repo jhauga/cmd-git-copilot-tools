@@ -5,8 +5,21 @@ import {
   parseGitHubUrl,
   searchTools,
   filterByCategory,
+  groupBySource,
+  getFileContentByPath,
+  pathExists,
+  listDirectoryTree,
+  configureRequests,
+  resolveCategoryPaths,
+  parsePluginMetadata,
+  parsePluginJson,
+  downloadPlugin,
+  downloadDirectory,
+  GitHubApiError,
   CATEGORY_LABELS,
+  KIND_TO_CATEGORY,
   ORDERED_CATEGORIES,
+  PLUGIN_JSON_RELATIVE_PATH,
 } from '../../index.js';
 import type { Config, CopilotItem, ToolCategory } from '../../index.js';
 import { runSuite, assert, assertEqual } from '../runner.js';
@@ -101,6 +114,21 @@ export async function runProgrammaticSuite(): Promise<SuiteResult> {
       assert(typeof getDefaultConfig === 'function', 'getDefaultConfig should be a function');
       assert(typeof searchTools === 'function', 'searchTools should be a function');
       assert(typeof filterByCategory === 'function', 'filterByCategory should be a function');
+    },
+
+    'can import the plugin, path, request, and error helpers': () => {
+      const helpers = {
+        groupBySource, getFileContentByPath, pathExists, listDirectoryTree, configureRequests,
+        resolveCategoryPaths, parsePluginMetadata, parsePluginJson, downloadPlugin, downloadDirectory,
+      };
+      for (const [name, helper] of Object.entries(helpers)) {
+        assert(typeof helper === 'function', `${name} should be a function`);
+      }
+      assertEqual(KIND_TO_CATEGORY.skill, 'skills');
+      assertEqual(PLUGIN_JSON_RELATIVE_PATH, '.github/plugin/plugin.json');
+      const err = new GitHubApiError('rate limited', 403, 'https://api.github.com/repos/acme-corp/copilot-tools/contents/agents', { remaining: 0 });
+      assertEqual(err.isRateLimit, true);
+      assertEqual(err.name, 'GitHubApiError');
     },
   });
 }

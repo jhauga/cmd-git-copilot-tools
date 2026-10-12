@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { loadConfig, saveConfig, addSource, removeSource, setDefaultSource, setDefaultFolder, findSource, listSources, parseGitHubUrl, getConfigPath } from './engine/config.js';
-import { fetchAllToolsFromSources, fetchCategory, getToken, fetchDirectoryTree } from './engine/github.js';
+import { fetchAllToolsFromSources, fetchCategory, getToken, fetchDirectoryTree, configureRequests } from './engine/github.js';
 import { downloadItem, downloadItemsByName } from './engine/download.js';
 import type { DownloadOptions } from './engine/download.js';
 import { searchTools, filterByCategory, groupBySource } from './engine/search.js';
@@ -23,6 +23,8 @@ import { runPermissionsSuite } from './test/unit/permissions.js';
 import { runProgrammaticSuite } from './test/unit/programmatic.js';
 import { runFolderSuite } from './test/unit/folder.js';
 import { runMappingSuite } from './test/unit/mapping.js';
+import { runPluginSuite } from './test/unit/plugin.js';
+import { runGithubSuite } from './test/unit/github.js';
 import { runFullTest } from './test/full.js';
 
 // Load version from package.json
@@ -87,7 +89,7 @@ OPTIONS:
                                 The only place an absolute path is accepted.
 
   --test                        Run all tests (unit + integration)
-  --test:<name>                 Run a specific test suite (search, config, download, folder, mapping, cli, permissions, programmatic, full)
+  --test:<name>                 Run a specific test suite (search, config, download, folder, mapping, plugin, github, cli, permissions, programmatic, full)
   --test:log                    Run all tests and save results to logs/ folder
   --test:<name>:log             Run specific suite and save results to logs/ folder
   --log                         Save test results to logs/ (requires --test)
@@ -727,7 +729,7 @@ async function handleCategoryFlag(
   }
 }
 
-const KNOWN_UNIT_TESTS = ['search', 'config', 'download', 'folder', 'mapping', 'cli', 'permissions', 'programmatic', 'full'];
+const KNOWN_UNIT_TESTS = ['search', 'config', 'download', 'folder', 'mapping', 'plugin', 'github', 'cli', 'permissions', 'programmatic', 'full'];
 
 async function runTests(unitName: string | undefined, doLog: boolean): Promise<void> {
   const suites: SuiteResult[] = [];
@@ -739,6 +741,8 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
     suites.push(await runDownloadSuite());
     suites.push(await runFolderSuite());
     suites.push(await runMappingSuite());
+    suites.push(await runPluginSuite());
+    suites.push(await runGithubSuite());
     suites.push(await runCliSuite());
     suites.push(await runPermissionsSuite());
     suites.push(await runProgrammaticSuite());
@@ -753,6 +757,10 @@ async function runTests(unitName: string | undefined, doLog: boolean): Promise<v
     suites.push(await runFolderSuite());
   } else if (unitName === 'mapping') {
     suites.push(await runMappingSuite());
+  } else if (unitName === 'plugin') {
+    suites.push(await runPluginSuite());
+  } else if (unitName === 'github') {
+    suites.push(await runGithubSuite());
   } else if (unitName === 'cli') {
     suites.push(await runCliSuite());
   } else if (unitName === 'permissions') {
@@ -975,6 +983,7 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
+  configureRequests({ allowInsecureEnterpriseCerts: config.allowInsecureEnterpriseCerts });
 
   // -f, --folder bypasses every configured default for this run only.
   // It is the one place an absolute path is accepted.

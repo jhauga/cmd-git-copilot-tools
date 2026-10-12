@@ -12,12 +12,26 @@ export interface DownloadOptions {
   folderOverride?: string;
   /** Config-level default A.I. folder (`--set-default folder=<path>`). */
   configFolder?: string;
+  /**
+   * File or folder name written under the category directory, in place of
+   * the item name. A single name only: separators and `..` are rejected.
+   */
+  targetName?: string;
 }
 
-function ensureDir(dirPath: string): void {
+export function ensureDir(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
+}
+
+function resolveTargetName(item: CopilotItem, targetName?: string): string {
+  if (targetName === undefined) {return item.name;}
+  const name = targetName.trim();
+  if (name === '' || name === '.' || name === '..' || /[\\/]/.test(name)) {
+    throw new Error(`Invalid download name '${targetName}': it must be a single file or folder name.`);
+  }
+  return name;
 }
 
 function sha256(content: string): string {
@@ -36,23 +50,27 @@ export async function downloadFile(
   return fileData;
 }
 
-async function downloadDirectory(
+/** Download a repository folder and its subfolders into `destDir`; returns the number of files written. */
+export async function downloadDirectory(
   repo: RepositorySource,
   repoPath: string,
   destDir: string,
   token?: string
-): Promise<void> {
+): Promise<number> {
   const entries = await getDirectoryContents(repo, repoPath, token);
   ensureDir(destDir);
 
+  let written = 0;
   for (const entry of entries) {
     const entryDest = path.join(destDir, entry.name);
     if (entry.type === 'dir') {
-      await downloadDirectory(repo, entry.path, entryDest, token);
+      written += await downloadDirectory(repo, entry.path, entryDest, token);
     } else if (entry.type === 'file' && entry.download_url) {
       await downloadFile(entry.download_url, entryDest, token);
+      written++;
     }
   }
+  return written;
 }
 
 export async function downloadItem(
@@ -67,19 +85,17 @@ export async function downloadItem(
     config: { aiFolder: options.configFolder },
   });
   const targetBase = resolveCategoryDir(destDir, item.category, aiFolder);
+  const localPath = path.join(targetBase, resolveTargetName(item, options.targetName));
 
-  let localPath: string;
   let contentForHash: string;
 
   if (item.file.type === 'dir') {
     // Skills, plugins, and hooks: download entire directory
-    localPath = path.join(targetBase, item.name);
     await downloadDirectory(item.repo, item.file.path, localPath, token);
     // Use path as hash source for directories
     contentForHash = item.file.path + item.file.sha;
   } else {
     // Regular files
-    localPath = path.join(targetBase, item.name);
     if (!item.file.download_url) {
       throw new Error(`No download URL for '${item.name}'`);
     }

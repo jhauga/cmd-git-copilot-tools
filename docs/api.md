@@ -17,6 +17,7 @@ src/
 │   ├── download.ts   ← File and directory download
 │   ├── folder.ts     ← A.I. folder resolution for download paths
 │   ├── mapping.ts    ← Array folder mappings and folder/name references
+│   ├── plugin.ts     ← Plugin manifests and item-by-item plugin downloads
 │   └── search.ts     ← Search, filter, and selection helpers
 ├── ui/               ← Terminal UI (CLI-specific, not part of the API)
 │   ├── renderer.ts
@@ -146,6 +147,11 @@ import {
   fetchCategory,            // Fetch a single category from a source
   getToken,                 // Resolve auth token (see Authentication below)
   fetchDirectoryTree,       // List entries in a repository folder
+  getDirectoryContents,     // List one level of a repository folder (cached)
+  listDirectoryTree,        // List a folder and every subfolder, flattened
+  getFileContentByPath,     // Read one file by repository path
+  pathExists,               // Whether a repository path exists
+  configureRequests,        // Set the request timeout and enterprise TLS handling
 } from 'cmd-git-copilot-tools';
 
 // Example: fetch all tools
@@ -188,6 +194,58 @@ Token resolution order for `getToken`:
 5. Unauthenticated
 
 Authenticated requests are limited to 5,000 per hour; unauthenticated requests are limited to 60 per hour.
+
+#### Errors
+
+Every failing GitHub response is thrown as a `GitHubApiError`:
+
+```typescript
+class GitHubApiError extends Error {
+  status: number;                // HTTP status
+  url: string;                   // request URL
+  rateLimitRemaining?: number;   // from x-ratelimit-remaining, when sent
+  rateLimitReset?: Date;         // from x-ratelimit-reset, when sent
+  readonly isRateLimit: boolean; // 429, or 403 with no requests remaining
+}
+```
+
+`fetchCategory` and `fetchAllTools` treat a 404 as an empty category. A host that shows its own sign-in or rate-limit prompts switches on `status` and `isRateLimit`:
+
+```typescript
+try {
+  items = await fetchCategory(source, 'skills', token);
+} catch (error) {
+  if (error instanceof GitHubApiError && error.isRateLimit) {
+    showRateLimitNotice(error.rateLimitReset);
+  } else if (error instanceof GitHubApiError && (error.status === 401 || error.status === 403)) {
+    promptForSignIn();
+  } else {
+    throw error;
+  }
+}
+```
+
+#### Request options
+
+```typescript
+configureRequests({
+  timeoutMs: 10000,                   // per request, default 15000
+  allowInsecureEnterpriseCerts: true, // skip certificate validation for enterprise hosts
+});
+```
+
+The options apply to every later request in the process. With `allowInsecureEnterpriseCerts` on, requests to hosts other than `github.com` and its subdomains go through an `undici` agent that does not validate certificates. Requests to `github.com` always validate.
+
+#### Reading single paths
+
+```typescript
+const file = await getFileContentByPath(source, 'plugins/sample-plugin/README.md', token);
+file.content;  // decoded text
+file.sha;      // blob sha
+
+await pathExists(source, 'skills/my-skill/SKILL.md', token);      // true or false; other failures throw
+const tree = await listDirectoryTree(source, 'skills/my-skill', token); // entries of every level
+```
 
 ---
 
@@ -244,6 +302,7 @@ import {
   downloadItemsByName,  // Download items matched by name from a list
   resolveItemsByName,   // Resolve one name or folder/name to the items it would download
   downloadFile,         // Download a raw URL to a specific path
+  downloadDirectory,    // Download a repository folder recursively; returns the file count
   getFileSizeDisplay,   // Format bytes as '1.5KB', '2.0MB', etc.
 } from 'cmd-git-copilot-tools';
 
@@ -255,20 +314,26 @@ console.log(`Saved to: ${meta.localPath}`);
 const custom = await downloadItem(item, workspaceFolder, token, {
   folderOverride: '.claude',
 });
+
+// Example: save under a name the user chose
+const renamed = await downloadItem(item, workspaceFolder, token, {
+  targetName: 'team-review.prompt.md',
+});
 ```
 
 #### `DownloadOptions` type
 
-Both `downloadItem` and `downloadItemsByName` accept an optional fourth argument controlling which A.I. folder the content lands in.
+Both `downloadItem` and `downloadItemsByName` accept an optional fourth argument controlling which A.I. folder the content lands in and what it is called.
 
 ```typescript
 interface DownloadOptions {
   folderOverride?: string;  // Highest precedence; may be an absolute path
   configFolder?: string;    // Config-level default (config.aiFolder)
+  targetName?: string;      // File or folder name to write, instead of item.name
 }
 ```
 
-Omit it and the item's own source is consulted, then the built-in `.github` default.
+Omit the folder options and the item's own source is consulted, then the built-in `.github` default. `targetName` must be a single name: a value with a path separator or a `..` segment throws before anything is fetched. `DownloadMetadata.itemName` keeps the item's own name; `localPath` reflects the name written.
 
 #### Resolving names
 
@@ -357,6 +422,7 @@ Pure helpers for array folder mappings and folder-qualified tool names.
 import {
   normalizeMappedFolder, // './frontend/' → 'frontend'; '.', '/', './' → '' (root)
   getMappedFolders,      // Array mapping → normalized, de-duplicated folders; otherwise null
+  resolveCategoryPaths,  // Repository paths a tool type is listed from, in search order
   parseToolReference,    // 'backend/my-skill' → { folder: 'backend', name: 'my-skill' }
   formatToolReference,   // ('backend', 'my-skill') → 'backend/my-skill'; ('', 'my-skill') → './my-skill'
   getItemFolder,         // Folder an item was listed from ('' = root)
@@ -365,9 +431,61 @@ import {
 
 getMappedFolders(['frontend', './frontend', 'backend', '.']); // ['frontend', 'backend', '']
 getMappedFolders('custom/path');                             // null
+
+resolveCategoryPaths({}, 'agents');                                           // ['agents']
+resolveCategoryPaths({ folderMappings: { skills: 'root' } }, 'skills');       // ['']
+resolveCategoryPaths({ folderMappings: { skills: ['web', '.'] } }, 'skills'); // ['web', '']
+resolveCategoryPaths({ folderMappings: { agents: null } }, 'agents');         // []
 ```
 
-When an array includes the root, the root listing skips entries named after the other folders in the same array, so they are not listed as tools.
+When an array includes the root, the root listing skips entries named after the other folders in the same array, so they are not listed as tools. A mapping that is an empty string means the default folder for that tool type.
+
+---
+
+### `engine/plugin.ts` - Plugins
+
+A plugin is a folder whose manifest, `.github/plugin/plugin.json`, lists the agents, skills, instructions and prompts it bundles. `downloadItem` copies a plugin folder as it is; `downloadPlugin` reads the manifest and places each item in its own category folder.
+
+```typescript
+import {
+  parsePluginMetadata,       // Validate a manifest string; both layouts normalize to items[]
+  parsePluginJson,           // Fetch and parse the manifest of a plugin folder
+  downloadPlugin,            // Download a plugin item by item
+  KIND_TO_CATEGORY,          // { instruction: 'instructions', prompt: 'prompts', agent: 'agents', skill: 'skills' }
+  PLUGIN_JSON_RELATIVE_PATH, // '.github/plugin/plugin.json'
+} from 'cmd-git-copilot-tools';
+
+const { metadata } = await parsePluginJson(source, 'plugins/sample-plugin', token);
+metadata.items; // [{ path: 'plugins/sample-plugin/agents', kind: 'agent' }, ...]
+
+const result = await downloadPlugin(pluginItem, workspaceFolder, token);
+result.downloaded;    // ['agent: agents/ (2 files)', 'skill: my-skill (3 files)']
+result.failed;        // ['plugins/sample-plugin/prompts/missing.prompt.md (Path ... not found ...)']
+result.notices;       // problems copying the plugin's own files, if any
+result.pluginDir;     // <workspace>/.github/plugins/sample-plugin
+result.readmeContent; // the plugin README, or ''
+```
+
+Manifest layouts:
+
+| Layout | Shape |
+| --- | --- |
+| Current | `agents`, `skills`, `instructions` and `prompts` arrays of paths relative to the plugin folder (`./agents`, `./skills/name`) |
+| Legacy | an `items` array of `{ path, kind }` objects with repository paths |
+
+After parsing, `items` always holds the normalized list and `id` falls back to the plugin folder name. A manifest without a name, a description, or any item list throws an `Error` whose message starts with `Invalid plugin.json format`; `parsePluginJson` prefixes it with `Failed to parse plugin.json:` and lets a `GitHubApiError` through unchanged.
+
+What `downloadPlugin` writes, relative to the A.I. folder:
+
+| Item | Destination |
+| --- | --- |
+| `agent`, `instruction` or `prompt` file | `<category>/<file name>` |
+| `agent`, `instruction` or `prompt` folder reference (no extension) | every file below it, flat, into `<category>/` |
+| `skill` | `skills/<folder name>/`, replaced whole |
+| the plugin's own `agents/`, `commands/` and `README.md` | `plugins/<id>/` |
+| the manifest | `plugins/<id>/.github/plugin/plugin.json` |
+
+One failing item does not stop the others; it is reported in `failed`.
 
 ---
 
@@ -378,8 +496,9 @@ A singleton TTL cache keyed by repository and path. Used internally by `github.t
 ```typescript
 import { cache } from 'cmd-git-copilot-tools';
 
-cache.clear();                // Clear all cached data
-cache.clearRepo(source);      // Clear cache for a specific repository source
+cache.clear();                       // Clear all cached data
+cache.clearRepo(source);             // Clear cache for a specific repository source
+cache.clearCategory(source, 'skills'); // Clear every folder the category is listed from
 ```
 
 ---
@@ -390,7 +509,7 @@ The following example shows how a VS Code extension could use the engine as its 
 
 ```typescript
 import * as vscode from 'vscode';
-import { downloadItem, fetchAllToolsFromSources, searchTools } from 'cmd-git-copilot-tools';
+import { GitHubApiError, downloadItem, fetchAllToolsFromSources, searchTools } from 'cmd-git-copilot-tools';
 import type { RepositorySource } from 'cmd-git-copilot-tools';
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -428,11 +547,23 @@ export async function activate(context: vscode.ExtensionContext) {
         return;
       }
 
+      // Let the user rename the file before it is written
+      const targetName = await vscode.window.showInputBox({ prompt: 'Save as', value: selected.item.name });
+      if (!targetName) { return; }
+
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Downloading ${selected.item.name}` },
         async () => {
-          const meta = await downloadItem(selected.item, workspaceFolder, token);
-          vscode.window.showInformationMessage(`Downloaded to ${meta.localPath}`);
+          try {
+            const meta = await downloadItem(selected.item, workspaceFolder, token, { targetName });
+            vscode.window.showInformationMessage(`Downloaded to ${meta.localPath}`);
+          } catch (error) {
+            if (error instanceof GitHubApiError && (error.status === 401 || error.status === 403)) {
+              vscode.window.showErrorMessage('Sign in to GitHub to download from this repository.');
+              return;
+            }
+            throw error;
+          }
         }
       );
     })
@@ -459,7 +590,15 @@ import type {
   Config,              // Full config file shape
   FolderMappings,      // Custom folder-to-category mapping config
   FolderMappingValue,  // string | 'root' | string[] | null
+  GitHubFileContent,   // One file read by path: content, download_url, sha, size
+  RequestOptions,      // configureRequests() argument: timeoutMs, allowInsecureEnterpriseCerts
+  PluginMetadata,      // Parsed plugin manifest
+  PluginItem,          // One manifest entry: path and kind
+  PluginItemKind,      // 'instruction' | 'prompt' | 'agent' | 'skill'
+  PluginParseResult,   // metadata plus the raw manifest text
+  PluginDownloadResult, // What downloadPlugin wrote, failed on, and read
   // Error types:
+  GitHubApiError,
   ToolNotFoundError,
   MappedToolNotFoundError,
   SourceNotFoundError,
@@ -473,6 +612,8 @@ import type {
   ORDERED_CATEGORIES,  // ToolCategory[] in display order
   DOWNLOAD_PATHS,      // Record<ToolCategory, string> — default .github/ paths
   DEFAULT_AI_FOLDER,   // '.github'
+  KIND_TO_CATEGORY,    // Record<PluginItemKind, ToolCategory>
+  PLUGIN_JSON_RELATIVE_PATH, // '.github/plugin/plugin.json'
 } from 'cmd-git-copilot-tools';
 ```
 

@@ -332,7 +332,9 @@ When enabled, the tool checks whether downloaded items have newer versions avail
 > **Security Warning:** This setting disables TLS certificate validation for Enterprise GitHub
 > servers only. Only enable for trusted enterprise environments with self-signed certificates.
 
-When enabled, set `NODE_TLS_REJECT_UNAUTHORIZED=0` in your environment or configure this setting to accept self-signed certificates.
+When enabled, requests to hosts other than `github.com` and its subdomains accept self-signed or
+otherwise untrusted certificates. Requests to `github.com` always validate certificates, whatever
+this setting says. No environment variable is involved, and nothing else in the process is affected.
 
 ---
 

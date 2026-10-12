@@ -1,9 +1,38 @@
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import { getFileSizeDisplay, matchesToolName } from '../../engine/download.js';
+import { downloadItem, getFileSizeDisplay, matchesToolName } from '../../engine/download.js';
 import { DOWNLOAD_PATHS, ORDERED_CATEGORIES } from '../../types.js';
-import type { ToolCategory } from '../../types.js';
+import type { CopilotItem, ToolCategory } from '../../types.js';
+import { withFetchStub } from '../stub.js';
 import { runSuite, assert, assertEqual } from '../runner.js';
 import type { SuiteResult } from '../runner.js';
+
+const downloadUrl = 'https://raw.example.com/agents/my-agent.agent.md';
+
+/** A single-file item whose body the fetch stub serves. */
+function agentItem(): CopilotItem {
+  return {
+    id: 'acme-corp/copilot-tools/agents/my-agent.agent.md',
+    name: 'my-agent.agent.md',
+    category: 'agents',
+    repo: { owner: 'acme-corp', repo: 'copilot-tools' },
+    file: {
+      name: 'my-agent.agent.md',
+      path: 'agents/my-agent.agent.md',
+      type: 'file',
+      download_url: downloadUrl,
+      size: 7,
+      sha: 'abc123',
+    },
+  };
+}
+
+function tempDir(): string {
+  const dir = path.join(os.tmpdir(), 'cmd-git-copilot-tools', 'test-download');
+  fs.rmSync(dir, { recursive: true, force: true });
+  return dir;
+}
 
 export async function runDownloadSuite(): Promise<SuiteResult> {
   return runSuite('unit: download', {
@@ -144,6 +173,29 @@ export async function runDownloadSuite(): Promise<SuiteResult> {
       assert(matchesToolName('session-logger', 'session-logger'), 'exact hook folder name matches');
       assert(matchesToolName('tool-guardian', 'tool-guardian'), 'exact hook folder name matches');
       assert(!matchesToolName('session-logger', 'session-auto-commit'), 'non-matching hook name returns false');
+    },
+    'downloadItem: targetName replaces the item name on disk': async () => {
+      const dest = tempDir();
+      await withFetchStub({ [downloadUrl]: { body: '# agent' } }, async () => {
+        const meta = await downloadItem(agentItem(), dest, undefined, { targetName: 'renamed.agent.md' });
+        assertEqual(meta.localPath, path.join(dest, '.github', 'agents', 'renamed.agent.md'));
+        assertEqual(meta.itemName, 'my-agent.agent.md', 'the item keeps its own name');
+        assertEqual(fs.readFileSync(meta.localPath, 'utf-8'), '# agent');
+      });
+      fs.rmSync(dest, { recursive: true, force: true });
+    },
+    'downloadItem: targetName must be a single file or folder name': async () => {
+      const dest = tempDir();
+      for (const bad of ['../escape.md', 'sub/name.md', 'sub\\name.md', '..', '.', '', '   ']) {
+        let message = '';
+        try {
+          await downloadItem(agentItem(), dest, undefined, { targetName: bad });
+        } catch (err) {
+          message = err instanceof Error ? err.message : String(err);
+        }
+        assert(message.includes('Invalid download name'), `'${bad}' should be rejected, got: ${message || '(no error)'}`);
+      }
+      assert(!fs.existsSync(dest), 'nothing is written for a rejected name');
     },
   });
 }

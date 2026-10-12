@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### Programmatic API
+
+- Added the `engine/plugin.ts` module, exporting `parsePluginMetadata`, `parsePluginJson`, `downloadPlugin`, `KIND_TO_CATEGORY`, `PLUGIN_JSON_RELATIVE_PATH`, and the `PluginItem`, `PluginItemKind`, `PluginMetadata`, `PluginParseResult`, and `PluginDownloadResult` types
+  - `parsePluginMetadata` validates a manifest and normalizes both manifest layouts (the current `agents`, `skills`, `instructions`, and `prompts` arrays, and the legacy `items` array) to one `items` list
+  - `downloadPlugin` writes each listed agent, skill, instruction, and prompt to its own category folder, then copies the plugin's `agents/`, `commands/`, `README.md`, and manifest into `plugins/<id>/`. One failing item is reported without stopping the others
+- Added `GitHubApiError`, thrown for every failing GitHub response. It carries `status`, `url`, `rateLimitRemaining`, `rateLimitReset`, and `isRateLimit`
+- Added `getFileContentByPath`, `pathExists`, and `listDirectoryTree` to the GitHub module
+- Added `configureRequests` and the `RequestOptions` type, which set the request timeout and `allowInsecureEnterpriseCerts` for the process. With the option on, requests to GitHub Enterprise hosts skip certificate validation through an `undici` agent; requests to `github.com` always validate
+- Added `resolveCategoryPaths` to the mapping module, returning the repository paths a tool type is listed from
+- Added `DownloadOptions.targetName`, the file or folder name written in place of the item name. Separators and `..` are rejected
+- Added `downloadDirectory` to the download module, returning the number of files written
+- Exported `groupBySource` from the package root
+
+#### Tests
+
+- Added the `plugin` test suite covering manifest validation for both layouts, relative path resolution, id derivation, and an item-by-item download against a stubbed GitHub API (`--test:plugin`, `npm run test:plugin`)
+- Added the `github` test suite covering `GitHubApiError` classification, single-path reads, existence checks, recursive listings, and the enterprise certificate dispatcher (`--test:github`, `npm run test:github`)
+- Added a fetch stub for tests (`src/test/stub.ts`) that answers known URLs and returns 404 for every other URL
+
+### Changed
+
+- `cache.clearCategory` clears every path a tool type is listed from, including array mappings and the root, instead of the single key named after the category
+- A folder mapping that is an empty or whitespace-only string means the default folder for that tool type. It was read as the repository root
+- The command-line tool applies `allowInsecureEnterpriseCerts` from the config file, which was stored but never read
+- `undici` is a runtime dependency, kept external to the bundles. The package requires Node.js 18.17 or newer
+- The package manifest's `bin` path and `repository.url` use the forms npm writes at publish time
+
+### Fixed
+
+- A 403 response is reported as a rate limit only when `x-ratelimit-remaining` is `0`. A 403 from missing permissions used to read as a rate limit whenever the reset header was present
+- `getFileContent` throws `GitHubApiError` on a failing download instead of a plain `Error`
+- A request timeout in `getFileContent` is reported with the URL instead of a bare `AbortError`
+
 ## [2.0.0] - 2026-10-12
 
 ### Added

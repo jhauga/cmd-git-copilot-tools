@@ -275,7 +275,7 @@ cmd-copilot-tools [options]
 | `--list-source` | List all configured sources |
 | `-f`, `--folder <path>` | Download into `<path>/<category>` for this run, bypassing the configured default. The only place an absolute path is accepted |
 | `--test` | Run all tests (unit + integration) |
-| `--test:<name>` | Run a specific suite: `search`, `config`, `download`, `folder`, `mapping`, `cli`, `permissions`, `programmatic`, `full` |
+| `--test:<name>` | Run a specific suite: `search`, `config`, `download`, `folder`, `mapping`, `plugin`, `github`, `cli`, `permissions`, `programmatic`, `full` |
 | `--test:log` | Run all tests and save log to `logs/` |
 | `--test:<name>:log` | Run specific suite and save log |
 | `--log` | Save test log to `logs/` (requires `--test`) |
@@ -585,13 +585,13 @@ Config file location:
 | `cacheTimeout` | `number` | `3600000` | Cache duration in ms (default: 1 hour) |
 | `logLevel` | `string` | `"info"` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
 | `checkForUpdates` | `boolean` | `true` | Check for updates to downloaded items |
-| `allowInsecureEnterpriseCerts` | `boolean` | `false` | Allow insecure TLS for Enterprise GitHub servers |
+| `allowInsecureEnterpriseCerts` | `boolean` | `false` | Skip TLS certificate validation for GitHub Enterprise hosts. Requests to `github.com` always validate |
 
 For full configuration details, see [docs/configuration.md](docs/configuration.md).
 
 ## Requirements
 
-- Node.js 18 or higher
+- Node.js 18.17 or higher
 - Internet connection to fetch repository data
 
 ## Development
@@ -599,7 +599,7 @@ For full configuration details, see [docs/configuration.md](docs/configuration.m
 This command-line tool was built with:
 
 - TypeScript
-- Node.js native `fetch` API for HTTP requests
+- Node.js native `fetch` API for HTTP requests, with `undici` for GitHub Enterprise servers that use self-signed certificates
 - ESBuild for bundling
 - Node.js readline for interactive terminal UI
 
@@ -625,10 +625,15 @@ Run individual suites:
 ```bash
 npm run test:search      # search/filter unit tests
 npm run test:config      # config management unit tests
-npm run test:download    # download path unit tests
+npm run test:download    # download paths and target names
+npm run test:folder      # A.I. folder resolution
 npm run test:mapping     # folder-mapping arrays and folder/name resolution
+npm run test:plugin      # plugin manifests and item-by-item plugin downloads (stubbed GitHub API)
+npm run test:github      # GitHub error classification, single-path reads, and request options (stubbed GitHub API)
 npm run test:full        # live integration test (fetches from GitHub, downloads to OS temp)
 ```
+
+Every suite except `full` runs offline.
 
 Save results to a log file in `logs/`:
 
@@ -639,7 +644,7 @@ npm run test:search:log
 
 ### Engine API
 
-The `src/engine/` modules are host-agnostic and can be used as a backend for editor extensions or other tools. The [Git Copilot Tools](https://github.com/jhauga/vscode-git-copilot-tools) VS Code extension consumes them through this package, so engine changes are made here rather than in the extension. See [docs/api.md](docs/api.md) for the full engine API reference and a VS Code extension example.
+The `src/engine/` modules are host-agnostic and can be used as a backend for editor extensions or other tools. The [Git Copilot Tools](https://github.com/jhauga/vscode-git-copilot-tools) VS Code extension consumes them through this package, so engine changes are made here rather than in the extension. Beyond listing and downloading, the engine parses plugin manifests and downloads plugins item by item (`parsePluginJson`, `downloadPlugin`), reads single files and checks paths (`getFileContentByPath`, `pathExists`, `listDirectoryTree`), and reports every failing GitHub response as a `GitHubApiError` with its status and rate-limit details. See [docs/api.md](docs/api.md) for the full engine API reference and a VS Code extension example.
 
 **Enjoy browsing and using awesome GitHub Copilot customization tools!**
 

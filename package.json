@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/jhauga/cmd-git-copilot-tools.git"
+    "url": "git+https://github.com/jhauga/cmd-git-copilot-tools.git"
   },
   "qna": "https://github.com/jhauga/cmd-git-copilot-tools/issues",
   "homepage": "https://github.com/jhauga/cmd-git-copilot-tools",
@@ -33,7 +33,7 @@
     "developer-tools"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.17.0"
   },
   "files": [
     "dist/",
@@ -42,7 +42,7 @@
     "README.md"
   ],
   "bin": {
-    "cmd-copilot-tools": "./dist/cli.js"
+    "cmd-copilot-tools": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -76,6 +76,10 @@
     "test:folder:log": "node dist/cli.js --test:folder:log",
     "test:mapping": "node dist/cli.js --test:mapping",
     "test:mapping:log": "node dist/cli.js --test:mapping:log",
+    "test:plugin": "node dist/cli.js --test:plugin",
+    "test:plugin:log": "node dist/cli.js --test:plugin:log",
+    "test:github": "node dist/cli.js --test:github",
+    "test:github:log": "node dist/cli.js --test:github:log",
     "test:programmatic": "node dist/cli.js --test:programmatic",
     "test:programmatic:log": "node dist/cli.js --test:programmatic:log",
     "test:full": "node dist/cli.js --test:full",
@@ -90,7 +94,9 @@
     "npm-run-all": "^4.1.5",
     "typescript": "^5.8.3"
   },
-  "dependencies": {},
+  "dependencies": {
+    "undici": "^6.29.0"
+  },
   "optionalDependencies": {
     "@esbuild/linux-x64": "^0.27.3"
   }

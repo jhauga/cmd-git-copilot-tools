@@ -20,6 +20,7 @@ export {
   DOWNLOAD_PATHS,
   DEFAULT_AI_FOLDER,
   AbsoluteFolderPathError,
+  GitHubApiError,
   MappedToolNotFoundError,
   ToolNotFoundError,
   SourceNotFoundError,
@@ -46,6 +47,7 @@ export {
 } from './engine/config.js';
 
 // Export GitHub API functions
+export type { GitHubFileContent, RequestOptions } from './engine/github.js';
 export {
   fetchAllToolsFromSources,
   fetchCategory,
@@ -53,8 +55,13 @@ export {
   fetchDirectoryTree,
   buildApiUrl,
   getDirectoryContents,
+  listDirectoryTree,
   getFileContent,
+  getFileContentByPath,
+  pathExists,
   fetchAllTools,
+  configureRequests,
+  getRequestOptions,
 } from './engine/github.js';
 
 // Export download functions
@@ -63,16 +70,34 @@ export {
   downloadItem,
   downloadItemsByName,
   downloadFile,
+  downloadDirectory,
   matchesToolName,
   resolveItemsByName,
   getFileSizeDisplay,
 } from './engine/download.js';
+
+// Export plugin helpers (manifest parsing and item-by-item plugin downloads)
+export type {
+  PluginItemKind,
+  PluginItem,
+  PluginMetadata,
+  PluginParseResult,
+  PluginDownloadResult,
+} from './engine/plugin.js';
+export {
+  PLUGIN_JSON_RELATIVE_PATH,
+  KIND_TO_CATEGORY,
+  parsePluginMetadata,
+  parsePluginJson,
+  downloadPlugin,
+} from './engine/plugin.js';
 
 // Export folder-mapping helpers (array mappings and folder/name references)
 export type { ToolReference } from './engine/mapping.js';
 export {
   normalizeMappedFolder,
   getMappedFolders,
+  resolveCategoryPaths,
   parseToolReference,
   formatToolReference,
   getItemFolder,
@@ -93,6 +118,7 @@ export {
   searchTools,
   filterByCategory,
   groupByCategory,
+  groupBySource,
   findByCode,
 } from './engine/search.js';
 

@@ -1,4 +1,5 @@
-import type { RepositorySource } from '../types.js';
+import type { RepositorySource, ToolCategory } from '../types.js';
+import { resolveCategoryPaths } from './mapping.js';
 
 interface CacheEntry<T> {
   data: T;
@@ -36,9 +37,11 @@ class Cache {
     }
   }
 
-  clearCategory(repo: RepositorySource, category: string): void {
-    const key = buildCacheKey(repo, category);
-    this.store.delete(key);
+  /** Drop the listings a tool type is read from: one key per mapped path. */
+  clearCategory(repo: RepositorySource, category: ToolCategory): void {
+    for (const repoPath of resolveCategoryPaths(repo, category)) {
+      this.store.delete(buildCacheKey(repo, repoPath));
+    }
   }
 
   size(): number {

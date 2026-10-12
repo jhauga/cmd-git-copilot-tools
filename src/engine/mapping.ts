@@ -1,5 +1,5 @@
 import * as path from 'path';
-import type { CopilotItem, FolderMappingValue } from '../types.js';
+import type { CopilotItem, FolderMappingValue, RepositorySource, ToolCategory } from '../types.js';
 
 /**
  * Normalize one folder of an array mapping to a repository-relative path.
@@ -31,6 +31,24 @@ export function getMappedFolders(mapping: FolderMappingValue | undefined): strin
     if (!folders.includes(folder)) {folders.push(folder);}
   }
   return folders;
+}
+
+/**
+ * Repository paths a tool type is listed from, in search order:
+ *   - `[]`            excluded (`null`, or an empty array)
+ *   - `['']`          the repository root (`'root'`)
+ *   - `[path]`        one folder
+ *   - `[a, b, ...]`   the normalized folders of an array mapping
+ * Without a mapping, or with a blank one, the folder named after the tool type.
+ */
+export function resolveCategoryPaths(repo: Pick<RepositorySource, 'folderMappings'>, category: ToolCategory): string[] {
+  const mapping = repo.folderMappings?.[category];
+  if (mapping === null) {return [];}
+  if (mapping === undefined) {return [category];}
+  if (Array.isArray(mapping)) {return getMappedFolders(mapping) ?? [];}
+  if (mapping === 'root') {return [''];}
+  const folder = mapping.trim();
+  return [folder === '' ? category : folder];
 }
 
 export interface ToolReference {

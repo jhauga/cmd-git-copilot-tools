@@ -1,6 +1,7 @@
 import {
   normalizeMappedFolder,
   getMappedFolders,
+  resolveCategoryPaths,
   parseToolReference,
   formatToolReference,
   getItemFolder,
@@ -124,6 +125,31 @@ export async function runMappingSuite(): Promise<SuiteResult> {
     },
     'getMappedFolders: empty array maps no folders': () => {
       assertDeepEqual(getMappedFolders([]), []);
+    },
+
+    // --- resolveCategoryPaths ---------------------------------------------
+    'resolveCategoryPaths: default, folder, root, excluded, and array mappings': () => {
+      assertDeepEqual(resolveCategoryPaths({}, 'skills'), ['skills']);
+      assertDeepEqual(resolveCategoryPaths({ folderMappings: { skills: 'custom/skills' } }, 'skills'), ['custom/skills']);
+      assertDeepEqual(resolveCategoryPaths({ folderMappings: { skills: 'root' } }, 'skills'), ['']);
+      assertDeepEqual(resolveCategoryPaths({ folderMappings: { skills: null } }, 'skills'), []);
+      assertDeepEqual(resolveCategoryPaths({ folderMappings: { skills: [] } }, 'skills'), []);
+      assertDeepEqual(resolveCategoryPaths(mappedRepo, 'skills'), ['web', 'data', '']);
+      assertDeepEqual(resolveCategoryPaths(mappedRepo, 'agents'), ['team', 'ops']);
+    },
+    'resolveCategoryPaths: a blank folder means the default, and folders are trimmed': () => {
+      assertDeepEqual(resolveCategoryPaths({ folderMappings: { skills: '   ' } }, 'skills'), ['skills']);
+      assertDeepEqual(resolveCategoryPaths({ folderMappings: { skills: ' custom/skills ' } }, 'skills'), ['custom/skills']);
+    },
+    'cache.clearCategory: drops every folder a tool type is listed from': () => {
+      seedCache();
+      cache.clearCategory(mappedRepo, 'skills');
+      assertEqual(cache.get(buildCacheKey(mappedRepo, 'web')), undefined);
+      assertEqual(cache.get(buildCacheKey(mappedRepo, 'data')), undefined);
+      assertEqual(cache.get(buildCacheKey(mappedRepo, '')), undefined);
+      assert(cache.get(buildCacheKey(mappedRepo, 'team')) !== undefined, 'the agents listings stay');
+      cache.clearCategory(singleRepo, 'skills');
+      assertEqual(cache.get(buildCacheKey(singleRepo, 'skills')), undefined);
     },
 
     // --- parseToolReference / formatToolReference -------------------------

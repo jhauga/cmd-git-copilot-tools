@@ -48,6 +48,7 @@ async function main() {
 		banner: {
 			js: '#!/usr/bin/env node',
 		},
+		external: ['undici'], // Installed with the package; keeps the CLI bundle small
 		define,
 		logLevel: 'silent',
 		plugins: [
@@ -68,7 +69,7 @@ async function main() {
 		sourcesContent: false,
 		platform: 'node',
 		outfile: 'dist/index.js',
-		external: ['axios'], // Don't bundle axios for library usage
+		external: ['undici'], // Installed with the package; a host bundles it from node_modules if it needs one file
 		define,
 		logLevel: 'silent',
 		plugins: [
